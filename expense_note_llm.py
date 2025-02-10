@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
-from openai import OpenAI
+import os
 
 # 페이지 설정
 st.set_page_config(
@@ -14,106 +14,131 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS 스타일
-st.markdown("""
-    <style>
-    .stButton>button {
-        width: 100%;
-        background-color: #4CAF50;
-        color: white;
-        height: 3em;
-    }
-    .metric-card {
-        background-color: #f8f9fa;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 0.5rem 0;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# 데이터베이스 경로 설정
+DB_PATH = 'expenses.db'
 
-# 데이터베이스 연결 함수
-def get_db_connection():
-    return sqlite3.connect('expenses.db')
-
-# 데이터베이스 초기화
+# 데이터베이스 연결 및 초기화
 def init_db():
-    conn = get_db_connection()
-    c = conn.cursor()
-    
-    # 카테고리 테이블 생성
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            budget REAL DEFAULT 0,
-            color TEXT
-        )
-    ''')
-    
-    # 지출 테이블 생성
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS expenses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            category_id INTEGER NOT NULL,
-            amount REAL NOT NULL,
-            description TEXT,
-            payment_method TEXT,
-            is_fixed_expense BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (category_id) REFERENCES categories (id)
-        )
-    ''')
-    
-    # 기본 카테고리 확인 및 추가
-    c.execute('SELECT COUNT(*) FROM categories')
-    if c.fetchone()[0] == 0:
-        default_categories = [
-            ('식비', 500000, '#FF6B6B'),
-            ('교통', 200000, '#4ECDC4'),
-            ('주거', 800000, '#45B7D1'),
-            ('통신', 100000, '#96CEB4'),
-            ('의료', 200000, '#D4A5A5'),
-            ('교육', 300000, '#9B89B3'),
-            ('여가', 400000, '#FAD02E'),
-            ('기타', 200000, '#95A5A6')
-        ]
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
         
-        for cat in default_categories:
-            try:
-                c.execute('INSERT INTO categories (name, budget, color) VALUES (?, ?, ?)', cat)
-            except sqlite3.IntegrityError:
-                pass
-    
-    conn.commit()
-    conn.close()
+        # 카테고리 테이블 생성
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS categories
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT NOT NULL UNIQUE,
+             budget REAL DEFAULT 0,
+             color TEXT)
+        ''')
+        
+        # 지출 테이블 생성
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS expenses
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             date TEXT NOT NULL,
+             category_id INTEGER NOT NULL,
+             amount REAL NOT NULL,
+             description TEXT,
+             payment_method TEXT,
+             is_fixed_expense BOOLEAN DEFAULT FALSE,
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             FOREIGN KEY (category_id) REFERENCES categories (id))
+        ''')
+        
+        # 기본 카테고리 확인
+        c.execute('SELECT COUNT(*) FROM categories')
+        if c.fetchone()[0] == 0:
+            # 기본 카테고리 추가
+            categories = [
+                ('식비', 500000, '#FF6B6B'),
+                ('교통', 200000, '#4ECDC4'),
+                ('주거', 800000, '#45B7D1'),
+                ('통신', 100000, '#96CEB4'),
+                ('의료', 200000, '#D4A5A5'),
+                ('교육', 300000, '#9B89B3'),
+                ('여가', 400000, '#FAD02E'),
+                ('기타', 200000, '#95A5A6')
+            ]
+            c.executemany('INSERT INTO categories (name, budget, color) VALUES (?,?,?)', categories)
+        
+        conn.commit()
+        
+    except Exception as e:
+        st.error(f'데이터베이스 초기화 중 오류가 발생했습니다: {str(e)}')
+        
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
 # 카테고리 데이터 가져오기
-@st.cache_data(ttl=60)
 def get_categories():
-    conn = get_db_connection()
-    categories = pd.read_sql_query('SELECT * FROM categories', conn)
-    conn.close()
-    return categories
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        query = 'SELECT * FROM categories ORDER BY name'
+        categories = pd.read_sql_query(query, conn)
+        return categories
+    except Exception as e:
+        st.error(f'카테고리 데이터를 가져오는 중 오류가 발생했습니다: {str(e)}')
+        return pd.DataFrame(columns=['id', 'name', 'budget', 'color'])
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
 # 지출 데이터 가져오기
-@st.cache_data(ttl=60)
 def get_expenses():
-    conn = get_db_connection()
-    expenses = pd.read_sql_query('''
-        SELECT e.*, c.name as category, c.color, c.budget 
-        FROM expenses e 
-        JOIN categories c ON e.category_id = c.id
-    ''', conn)
-    conn.close()
-    return expenses
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        query = '''
+            SELECT 
+                e.id,
+                e.date,
+                e.amount,
+                e.description,
+                e.payment_method,
+                e.is_fixed_expense,
+                c.name as category,
+                c.color,
+                c.budget
+            FROM expenses e
+            JOIN categories c ON e.category_id = c.id
+            ORDER BY e.date DESC
+        '''
+        expenses = pd.read_sql_query(query, conn)
+        return expenses
+    except Exception as e:
+        st.error(f'지출 데이터를 가져오는 중 오류가 발생했습니다: {str(e)}')
+        return pd.DataFrame(columns=['id', 'date', 'amount', 'description', 'payment_method', 
+                                   'is_fixed_expense', 'category', 'color', 'budget'])
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
+# 지출 추가
+def add_expense(date, category_id, amount, description, payment_method, is_fixed):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('''
+            INSERT INTO expenses 
+            (date, category_id, amount, description, payment_method, is_fixed_expense)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (date, category_id, amount, description, payment_method, is_fixed))
+        conn.commit()
+        return True
+    except Exception as e:
+        st.error(f'지출 추가 중 오류가 발생했습니다: {str(e)}')
+        return False
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+# 메인 애플리케이션
 def main():
+    st.title('💰 스마트 가계부')
+    
     # 데이터베이스 초기화
     init_db()
-    
-    st.title('💰 스마트 가계부')
     
     # 카테고리 데이터 로드
     categories_df = get_categories()
@@ -130,58 +155,27 @@ def main():
                 ['현금', '신용카드', '체크카드', '계좌이체', '기타'])
             is_fixed = st.checkbox('고정 지출')
             
-            if st.form_submit_button('저장', use_container_width=True):
-                if amount > 0:
-                    conn = get_db_connection()
-                    c = conn.cursor()
-                    category_id = categories_df[categories_df['name'] == category]['id'].iloc[0]
-                    
-                    c.execute('''
-                        INSERT INTO expenses 
-                        (date, category_id, amount, description, payment_method, is_fixed_expense)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (date.strftime('%Y-%m-%d'), category_id, amount, 
-                          description, payment_method, is_fixed))
-                    
-                    conn.commit()
-                    conn.close()
-                    st.success('저장 완료!')
-                    st.cache_data.clear()  # 캐시 초기화
-                else:
+            submit = st.form_submit_button('저장', use_container_width=True)
+            
+            if submit:
+                if amount <= 0:
                     st.error('금액을 입력해주세요!')
-
-        # 예산 관리
-        with st.expander("💵 예산 관리"):
-            for _, cat in categories_df.iterrows():
-                col1, col2 = st.columns([2, 1])
-                with col1:
-                    st.text(cat['name'])
-                with col2:
-                    new_budget = st.number_input(
-                        f"{cat['name']} 예산",
-                        value=float(cat['budget']),
-                        key=f"budget_{cat['id']}",
-                        step=10000.0
-                    )
-                    if new_budget != cat['budget']:
-                        conn = get_db_connection()
-                        c = conn.cursor()
-                        c.execute('UPDATE categories SET budget = ? WHERE id = ?',
-                                (new_budget, cat['id']))
-                        conn.commit()
-                        conn.close()
-                        st.cache_data.clear()  # 캐시 초기화
+                else:
+                    category_id = categories_df[categories_df['name'] == category]['id'].iloc[0]
+                    if add_expense(date.strftime('%Y-%m-%d'), category_id, amount, 
+                                 description, payment_method, is_fixed):
+                        st.success('저장 완료!')
                         st.experimental_rerun()
+    
+    # 지출 데이터 로드
+    expenses_df = get_expenses()
+    
+    if len(expenses_df) == 0:
+        st.info('아직 지출 데이터가 없습니다. 왼쪽 사이드바에서 지출을 입력해주세요!')
+        return
     
     # 메인 화면 - 탭
     tab1, tab2 = st.tabs(['📊 대시보드', '📈 상세 분석'])
-    
-    # 지출 데이터 로드
-    df = get_expenses()
-    
-    if len(df) == 0:
-        st.info('아직 지출 데이터가 없습니다. 왼쪽 사이드바에서 지출을 입력해주세요!')
-        return
     
     # 기간 선택
     period = st.selectbox('조회 기간', 
@@ -206,13 +200,15 @@ def main():
         start_date = today.replace(month=1, day=1).strftime('%Y-%m-%d')
         end_date = today.strftime('%Y-%m-%d')
     else:
-        start_date = df['date'].min()
-        end_date = df['date'].max()
-    
+        start_date = expenses_df['date'].min()
+        end_date = expenses_df['date'].max()
+
     # 데이터 필터링
-    df['date'] = pd.to_datetime(df['date'])
-    mask = (df['date'] >= start_date) & (df['date'] <= end_date)
-    filtered_df = df[mask].copy()
+    expenses_df['date'] = pd.to_datetime(expenses_df['date'])
+    filtered_df = expenses_df[
+        (expenses_df['date'] >= start_date) & 
+        (expenses_df['date'] <= end_date)
+    ].copy()
     
     with tab1:
         # 주요 지표
