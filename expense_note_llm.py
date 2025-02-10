@@ -343,80 +343,107 @@ def main():
             if not daily_spending.empty:
                 fig2 = px.line(daily_spending, x='date', y='amount',
                               title='일별 지출 트렌드')
-                fig2.update_traces(line_color='#007BFF')
+fig2.update_traces(line_color='#4CAF50')
                 st.plotly_chart(fig2, use_container_width=True)
             
-            # 고정 지출 vs 변동 지출
-            fixed_vs_variable = filtered_df.groupby('is_fixed_expense')['amount'].sum()
-            if not fixed_vs_variable.empty:
-                fig4 = go.Figure(data=[go.Pie(
-                    labels=['변동 지출', '고정 지출'],
-                    values=fixed_vs_variable.values,
-                    hole=.4,
-                    marker_colors=['#FF6384', '#36A2EB']
-                )])
-                fig4.update_layout(title='고정 지출 vs 변동 지출')
-                st.plotly_chart(fig4, use_container_width=True)
+            # 결제 수단별 지출 비율
+            payment_spending = filtered_df.groupby('payment_method')['amount'].sum()
+            fig4 = px.pie(
+                values=payment_spending.values,
+                names=payment_spending.index,
+                title='결제 수단별 지출 비율'
+            )
+            st.plotly_chart(fig4, use_container_width=True)
     
     with tab2:
-        # 상세 분석 탭
-        st.header('상세 지출 내역')
+        # 상세 분석
+        st.header('지출 상세 내역')
         
-        # 컬럼 선택 필터
-        columns_to_show = st.multiselect(
-            '표시할 컬럼 선택', 
-            ['date', 'category', 'amount', 'description', 'payment_method', 'is_fixed_expense'],
-            default=['date', 'category', 'amount', 'description']
-        )
-        
-        # 데이터프레임 표시
-        st.dataframe(filtered_df[columns_to_show], 
-                     use_container_width=True,
-                     hide_index=True)
-        
-        # 결제 수단별 지출
-        payment_method_spending = filtered_df.groupby('payment_method')['amount'].sum()
-        if not payment_method_spending.empty:
-            fig5 = go.Figure(data=[go.Bar(
-                x=payment_method_spending.index,
-                y=payment_method_spending.values,
-                marker_color='#6A5ACD'
-            )])
-            fig5.update_layout(
-                title='결제 수단별 지출',
-                xaxis_title='결제 수단',
-                yaxis_title='지출 금액'
-            )
-            st.plotly_chart(fig5, use_container_width=True)
-        
-        # 통계적 요약 정보
-        st.header('통계 요약')
-        col1, col2, col3 = st.columns(3)
-        
+        # 필터
+        col1, col2 = st.columns(2)
         with col1:
-            st.metric('최대 지출', 
-                      f"{filtered_df['amount'].max():,.0f}원")
-        
+            selected_categories = st.multiselect(
+                '카테고리 선택',
+                options=filtered_df['category'].unique(),
+                default=filtered_df['category'].unique()
+            )
         with col2:
-            st.metric('최소 지출', 
-                      f"{filtered_df['amount'].min():,.0f}원")
+            min_amount = st.number_input('최소 금액', value=0, step=10000)
         
-        with col3:
-            st.metric('지출 중앙값', 
-                      f"{filtered_df['amount'].median():,.0f}원")
+        # 필터링된 데이터
+        display_df = filtered_df[
+            (filtered_df['category'].isin(selected_categories)) &
+            (filtered_df['amount'] >= min_amount)
+        ].sort_values('date', ascending=False)
+        
+        # 데이터 테이블
+        st.dataframe(
+            display_df[['date', 'category', 'amount', 'description', 'payment_method']],
+            hide_index=True,
+            column_config={
+                'date': st.column_config.DateColumn('날짜'),
+                'category': '카테고리',
+                'amount': st.column_config.NumberColumn(
+                    '금액',
+                    format='₩%d',
+                ),
+                'description': '설명',
+                'payment_method': '결제수단'
+            }
+        )
     
     with tab3:
-        # AI 분석 탭
         st.header('🤖 AI 지출 분석')
-        
-        if st.button('AI 분석 시작', use_container_width=True):
-            with st.spinner('AI가 지출 데이터를 분석 중입니다...'):
-                ai_analysis = analyze_expenses_with_llm(filtered_df, period)
-                st.write(ai_analysis)
-
-# 앱 실행
-if __name__ == '__main__':
-    main()
-
-
+        if st.button('분석 시작', use_container_width=True):
+            with st.spinner('분석 중...'):
+                analysis = analyze_expenses_with_llm(filtered_df, period)
+                st.markdown(analysis)
                 
+                # 카테고리별 분석 테이블
+                st.subheader('카테고리별 상세 분석')
+                cat_analysis = filtered_df.groupby('category').agg({
+                    'amount': ['sum', 'mean', 'count'],
+                    'date': 'nunique'
+                }).round(0)
+                
+                cat_analysis.columns = ['총 지출', '평균 지출', '거래 수', '지출 일수']
+                cat_analysis = cat_analysis.reset_index()
+                
+                # 예산 정보 추가
+                cat_analysis['예산'] = cat_analysis['category'].map(
+                    categories_df.set_index('name')['budget']
+                )
+                cat_analysis['예산 대비 사용률'] = (
+                    cat_analysis['총 지출'] / cat_analysis['예산'] * 100
+                ).round(1)
+                
+                st.dataframe(
+                    cat_analysis,
+                    hide_index=True,
+                    column_config={
+                        'category': '카테고리',
+                        '총 지출': st.column_config.NumberColumn(
+                            '총 지출',
+                            format='₩%d',
+                        ),
+                        '평균 지출': st.column_config.NumberColumn(
+                            '평균 지출',
+                            format='₩%d',
+                        ),
+                        '예산': st.column_config.NumberColumn(
+                            '예산',
+                            format='₩%d',
+                        ),
+                        '예산 대비 사용률': st.column_config.NumberColumn(
+                            '예산 대비 사용률',
+                            format='%.1f%%',
+                        ),
+                    }
+                )
+
+if __name__ == '__main__':
+    # 세션 상태 초기화
+    if 'reload_data' not in st.session_state:
+        st.session_state.reload_data = True
+    
+    main()
