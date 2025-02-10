@@ -17,6 +17,10 @@ st.set_page_config(
 # 데이터베이스 경로 설정
 DB_PATH = 'expenses.db'
 
+# 기존 데이터베이스 삭제 (스키마 변경을 위해)
+if os.path.exists(DB_PATH):
+    os.remove(DB_PATH)
+
 # 데이터베이스 연결 및 초기화
 def init_db():
     try:
@@ -32,7 +36,7 @@ def init_db():
              color TEXT)
         ''')
         
-        # 지출 테이블 생성
+        # 지출 테이블 생성 (payment_method 컬럼 추가)
         c.execute('''
             CREATE TABLE IF NOT EXISTS expenses
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,32 +44,36 @@ def init_db():
              category_id INTEGER NOT NULL,
              amount REAL NOT NULL,
              description TEXT,
-             payment_method TEXT,
+             payment_method TEXT DEFAULT '현금',
              is_fixed_expense BOOLEAN DEFAULT FALSE,
              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
              FOREIGN KEY (category_id) REFERENCES categories (id))
         ''')
         
-        # 기본 카테고리 확인
-        c.execute('SELECT COUNT(*) FROM categories')
-        if c.fetchone()[0] == 0:
-            # 기본 카테고리 추가
-            categories = [
-                ('식비', 500000, '#FF6B6B'),
-                ('교통', 200000, '#4ECDC4'),
-                ('주거', 800000, '#45B7D1'),
-                ('통신', 100000, '#96CEB4'),
-                ('의료', 200000, '#D4A5A5'),
-                ('교육', 300000, '#9B89B3'),
-                ('여가', 400000, '#FAD02E'),
-                ('기타', 200000, '#95A5A6')
-            ]
-            c.executemany('INSERT INTO categories (name, budget, color) VALUES (?,?,?)', categories)
+        # 기본 카테고리 추가
+        categories = [
+            ('식비', 500000, '#FF6B6B'),
+            ('교통', 200000, '#4ECDC4'),
+            ('주거', 800000, '#45B7D1'),
+            ('통신', 100000, '#96CEB4'),
+            ('의료', 200000, '#D4A5A5'),
+            ('교육', 300000, '#9B89B3'),
+            ('여가', 400000, '#FAD02E'),
+            ('기타', 200000, '#95A5A6')
+        ]
+        
+        for cat in categories:
+            try:
+                c.execute('INSERT INTO categories (name, budget, color) VALUES (?,?,?)', cat)
+            except sqlite3.IntegrityError:
+                pass
         
         conn.commit()
+        return True
         
     except Exception as e:
         st.error(f'데이터베이스 초기화 중 오류가 발생했습니다: {str(e)}')
+        return False
         
     finally:
         if 'conn' in locals():
@@ -133,12 +141,13 @@ def add_expense(date, category_id, amount, description, payment_method, is_fixed
         if 'conn' in locals():
             conn.close()
 
-# 메인 애플리케이션
 def main():
     st.title('💰 스마트 가계부')
     
     # 데이터베이스 초기화
-    init_db()
+    if not init_db():
+        st.error('데이터베이스 초기화에 실패했습니다.')
+        return
     
     # 카테고리 데이터 로드
     categories_df = get_categories()
