@@ -343,7 +343,7 @@ def main():
             if not daily_spending.empty:
                 fig2 = px.line(daily_spending, x='date', y='amount',
                               title='일별 지출 트렌드')
-fig2.update_traces(line_color='#4CAF50')
+                fig2.update_traces(line_color='#4CAF50')
                 st.plotly_chart(fig2, use_container_width=True)
             
             # 결제 수단별 지출 비율
