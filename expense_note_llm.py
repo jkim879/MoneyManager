@@ -17,10 +17,6 @@ st.set_page_config(
 # 데이터베이스 경로 설정
 DB_PATH = 'expenses.db'
 
-# 기존 데이터베이스 삭제 (스키마 변경을 위해)
-if os.path.exists(DB_PATH):
-    os.remove(DB_PATH)
-
 # 데이터베이스 연결 및 초기화
 def init_db():
     try:
@@ -36,7 +32,7 @@ def init_db():
              color TEXT)
         ''')
         
-        # 지출 테이블 생성 (payment_method 컬럼 추가)
+        # 지출 테이블 생성
         c.execute('''
             CREATE TABLE IF NOT EXISTS expenses
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,25 +46,28 @@ def init_db():
              FOREIGN KEY (category_id) REFERENCES categories (id))
         ''')
         
-        # 기본 카테고리 추가
-        categories = [
-            ('식비', 500000, '#FF6B6B'),
-            ('교통', 200000, '#4ECDC4'),
-            ('주거', 800000, '#45B7D1'),
-            ('통신', 100000, '#96CEB4'),
-            ('의료', 200000, '#D4A5A5'),
-            ('교육', 300000, '#9B89B3'),
-            ('여가', 400000, '#FAD02E'),
-            ('기타', 200000, '#95A5A6')
-        ]
+        # 기본 카테고리가 없을 경우에만 추가
+        c.execute('SELECT COUNT(*) FROM categories')
+        if c.fetchone()[0] == 0:
+            categories = [
+                ('식비', 500000, '#FF6B6B'),
+                ('교통', 200000, '#4ECDC4'),
+                ('주거', 800000, '#45B7D1'),
+                ('통신', 100000, '#96CEB4'),
+                ('의료', 200000, '#D4A5A5'),
+                ('교육', 300000, '#9B89B3'),
+                ('여가', 400000, '#FAD02E'),
+                ('기타', 200000, '#95A5A6')
+            ]
+            
+            for cat in categories:
+                try:
+                    c.execute('INSERT INTO categories (name, budget, color) VALUES (?,?,?)', cat)
+                except sqlite3.IntegrityError:
+                    pass
+            
+            conn.commit()
         
-        for cat in categories:
-            try:
-                c.execute('INSERT INTO categories (name, budget, color) VALUES (?,?,?)', cat)
-            except sqlite3.IntegrityError:
-                pass
-        
-        conn.commit()
         return True
         
     except Exception as e:
@@ -80,6 +79,7 @@ def init_db():
             conn.close()
 
 # 카테고리 데이터 가져오기
+@st.cache_data(ttl=60)
 def get_categories():
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -94,6 +94,7 @@ def get_categories():
             conn.close()
 
 # 지출 데이터 가져오기
+@st.cache_data(ttl=60)
 def get_expenses():
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -158,7 +159,14 @@ def main():
         with st.form('expense_form'):
             date = st.date_input('날짜', datetime.now())
             category = st.selectbox('카테고리', categories_df['name'].tolist())
-            amount = st.number_input('금액', min_value=0, step=1000)
+            
+            # 금액 입력 UI 개선
+            amount_str = st.text_input('금액', value='', placeholder='금액을 입력하세요')
+            try:
+                amount = int(amount_str.replace(',', '')) if amount_str else 0
+            except ValueError:
+                amount = 0
+                
             description = st.text_input('설명')
             payment_method = st.selectbox('결제 수단', 
                 ['현금', '신용카드', '체크카드', '계좌이체', '기타'])
@@ -174,6 +182,7 @@ def main():
                     if add_expense(date.strftime('%Y-%m-%d'), category_id, amount, 
                                  description, payment_method, is_fixed):
                         st.success('저장 완료!')
+                        st.cache_data.clear()
                         st.experimental_rerun()
     
     # 지출 데이터 로드
@@ -238,22 +247,24 @@ def main():
         with col1:
             # 카테고리별 지출 도넛 차트
             cat_spending = filtered_df.groupby('category')['amount'].sum()
-            fig1 = go.Figure(data=[go.Pie(
-                labels=cat_spending.index,
-                values=cat_spending.values,
-                hole=.4,
-                marker_colors=filtered_df.groupby('category')['color'].first()
-            )])
-            fig1.update_layout(title='카테고리별 지출 비율')
-            st.plotly_chart(fig1, use_container_width=True)
+            if not cat_spending.empty:
+                fig1 = go.Figure(data=[go.Pie(
+                    labels=cat_spending.index,
+                    values=cat_spending.values,
+                    hole=.4,
+                    marker_colors=filtered_df.groupby('category')['color'].first()
+                )])
+                fig1.update_layout(title='카테고리별 지출 비율')
+                st.plotly_chart(fig1, use_container_width=True)
         
         with col2:
             # 일별 지출 트렌드
             daily_spending = filtered_df.groupby('date')['amount'].sum().reset_index()
-            fig2 = px.line(daily_spending, x='date', y='amount',
-                          title='일별 지출 트렌드')
-            fig2.update_traces(line_color='#4CAF50')
-            st.plotly_chart(fig2, use_container_width=True)
+            if not daily_spending.empty:
+                fig2 = px.line(daily_spending, x='date', y='amount',
+                              title='일별 지출 트렌드')
+                fig2.update_traces(line_color='#4CAF50')
+                st.plotly_chart(fig2, use_container_width=True)
     
     with tab2:
         # 상세 분석
