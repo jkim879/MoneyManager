@@ -195,20 +195,33 @@ def add_expense(date, category_id, amount, description, payment_method, is_fixed
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         
-        # 저장 전 데이터 확인
-        st.write(f"Saving expense: {date}, {category_id}, {amount}, {description}")  # 디버깅용
+        # 입력 데이터 확인
+        st.write(f"Saving data - Date: {date}, Category: {category_id}, Amount: {amount}")
         
+        # 현재 expenses 테이블의 데이터 수 확인
+        c.execute('SELECT COUNT(*) FROM expenses')
+        before_count = c.fetchone()[0]
+        st.write(f"Records before insert: {before_count}")
+        
+        # 데이터 삽입
         c.execute('''
             INSERT INTO expenses 
             (date, category_id, amount, description, payment_method, is_fixed_expense)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (date, category_id, amount, description, payment_method, is_fixed))
+        
+        # 변경사항 저장
         conn.commit()
         
-        # 저장 후 데이터 확인
+        # 삽입 후 데이터 수 확인
+        c.execute('SELECT COUNT(*) FROM expenses')
+        after_count = c.fetchone()[0]
+        st.write(f"Records after insert: {after_count}")
+        
+        # 방금 삽입된 데이터 확인
         c.execute('SELECT * FROM expenses ORDER BY id DESC LIMIT 1')
         last_record = c.fetchone()
-        st.write("Last saved record:", last_record)  # 디버깅용
+        st.write("Last inserted record:", last_record)
         
         return True
     except Exception as e:
