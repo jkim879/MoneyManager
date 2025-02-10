@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
+from openai import OpenAI
 import os
 
 # 페이지 설정
@@ -14,8 +15,63 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# 상태 관리를 위한 세션 스테이트 초기화
+if 'reload_data' not in st.session_state:
+    st.session_state.reload_data = True
+
 # 데이터베이스 경로 설정
 DB_PATH = 'expenses.db'
+
+# LLM 분석 함수
+def analyze_expenses_with_llm(df, period='이번 달'):
+    try:
+        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+        
+        # 카테고리별 지출 분석
+        category_spending = df.groupby('category')['amount'].agg(['sum', 'count']).reset_index()
+        category_spending['percentage'] = (category_spending['sum'] / category_spending['sum'].sum() * 100).round(2)
+        
+        # 일별 패턴 분석
+        df['date'] = pd.to_datetime(df['date'])
+        daily_pattern = df.groupby(df['date'].dt.day_name())['amount'].mean()
+        
+        analysis_text = f"""
+        분석 기간: {period}
+        
+        총 지출: {df['amount'].sum():,.0f}원
+        거래 건수: {len(df)}건
+        
+        카테고리별 지출:
+        {category_spending.to_string()}
+        
+        일별 평균 지출:
+        {daily_pattern.to_string()}
+        """
+        
+        prompt = f"""
+다음은 가계부 데이터 분석 결과입니다:
+
+{analysis_text}
+
+이 데이터를 바탕으로 다음 항목들을 분석해주세요:
+1. 전반적인 지출 패턴과 특징
+2. 가장 많은 지출이 발생한 카테고리와 그 적정성
+3. 지출 습관 개선을 위한 구체적인 제안
+4. 예산 관리 및 절약을 위한 실질적인 조언
+
+한국어로 명확하고 실용적인 분석을 제공해주세요.
+"""
+        
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7
+        )
+        
+        return response.choices[0].message.content
+        
+    except Exception as e:
+        return f"분석 중 오류가 발생했습니다: {str(e)}"
 
 # 데이터베이스 연결 및 초기화
 def init_db():
@@ -79,7 +135,6 @@ def init_db():
             conn.close()
 
 # 카테고리 데이터 가져오기
-@st.cache_data(ttl=60)
 def get_categories():
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -94,7 +149,6 @@ def get_categories():
             conn.close()
 
 # 지출 데이터 가져오기
-@st.cache_data(ttl=60)
 def get_expenses():
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -134,6 +188,7 @@ def add_expense(date, category_id, amount, description, payment_method, is_fixed
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (date, category_id, amount, description, payment_method, is_fixed))
         conn.commit()
+        st.session_state.reload_data = True
         return True
     except Exception as e:
         st.error(f'지출 추가 중 오류가 발생했습니다: {str(e)}')
@@ -182,18 +237,21 @@ def main():
                     if add_expense(date.strftime('%Y-%m-%d'), category_id, amount, 
                                  description, payment_method, is_fixed):
                         st.success('저장 완료!')
-                        st.cache_data.clear()
-                        st.experimental_rerun()
+                        st.session_state.reload_data = True
     
     # 지출 데이터 로드
-    expenses_df = get_expenses()
+    if st.session_state.reload_data:
+        expenses_df = get_expenses()
+        st.session_state.reload_data = False
+    else:
+        expenses_df = get_expenses()
     
     if len(expenses_df) == 0:
         st.info('아직 지출 데이터가 없습니다. 왼쪽 사이드바에서 지출을 입력해주세요!')
         return
     
     # 메인 화면 - 탭
-    tab1, tab2 = st.tabs(['📊 대시보드', '📈 상세 분석'])
+    tab1, tab2, tab3 = st.tabs(['📊 대시보드', '📈 상세 분석', '🤖 AI 분석'])
     
     # 기간 선택
     period = st.selectbox('조회 기간', 
@@ -285,23 +343,4 @@ def main():
         display_df = filtered_df[
             (filtered_df['category'].isin(selected_categories)) &
             (filtered_df['amount'] >= min_amount)
-        ].sort_values('date', ascending=False)
-        
-        # 데이터 테이블
-        st.dataframe(
-            display_df[['date', 'category', 'amount', 'description', 'payment_method']],
-            hide_index=True,
-            column_config={
-                'date': st.column_config.DateColumn('날짜'),
-                'category': '카테고리',
-                'amount': st.column_config.NumberColumn(
-                    '금액',
-                    format='₩%d',
-                ),
-                'description': '설명',
-                'payment_method': '결제수단'
-            }
-        )
-
-if __name__ == '__main__':
-    main()
+        ].sort_values('date', ascending=False
