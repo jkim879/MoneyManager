@@ -16,13 +16,17 @@ st.set_page_config(
 )
 
 # 데이터베이스 경로 설정
-DB_PATH = 'expenses.db'
+DB_PATH = os.path.abspath('expenses.db')
+st.write(f"Database path: {DB_PATH}")  # 디버깅용 DB 경로 출력
 
 # 데이터베이스 연결 및 초기화
 def init_db():
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
+        
+        # 데이터베이스 연결 확인
+        st.write("Database connection established")
         
         # 카테고리 테이블 생성
         c.execute('''
@@ -47,9 +51,12 @@ def init_db():
              FOREIGN KEY (category_id) REFERENCES categories (id))
         ''')
         
-        # 기본 카테고리가 없을 경우에만 추가
+        # 기본 카테고리 추가 여부 확인
         c.execute('SELECT COUNT(*) FROM categories')
-        if c.fetchone()[0] == 0:
+        categories_count = c.fetchone()[0]
+        st.write(f"Current categories count: {categories_count}")  # 디버깅용
+        
+        if categories_count == 0:
             categories = [
                 ('식비', 500000, '#FF6B6B'),
                 ('교통', 200000, '#4ECDC4'),
@@ -64,10 +71,17 @@ def init_db():
             for cat in categories:
                 try:
                     c.execute('INSERT INTO categories (name, budget, color) VALUES (?,?,?)', cat)
+                    st.write(f"Added category: {cat[0]}")  # 디버깅용
                 except sqlite3.IntegrityError:
+                    st.write(f"Category already exists: {cat[0]}")  # 디버깅용
                     pass
             
             conn.commit()
+        
+        # 테이블 생성 확인
+        c.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = c.fetchall()
+        st.write(f"Available tables: {tables}")  # 디버깅용
         
         return True
         
@@ -136,6 +150,7 @@ def get_categories():
         conn = sqlite3.connect(DB_PATH)
         query = 'SELECT * FROM categories ORDER BY name'
         categories = pd.read_sql_query(query, conn)
+        st.write(f"Retrieved categories: {len(categories)}")  # 디버깅용
         return categories
     except Exception as e:
         st.error(f'카테고리 데이터를 가져오는 중 오류가 발생했습니다: {str(e)}')
@@ -164,6 +179,7 @@ def get_expenses():
             ORDER BY e.date DESC
         '''
         expenses = pd.read_sql_query(query, conn)
+        st.write(f"Retrieved expenses: {len(expenses)}")  # 디버깅용
         return expenses
     except Exception as e:
         st.error(f'지출 데이터를 가져오는 중 오류가 발생했습니다: {str(e)}')
@@ -178,12 +194,22 @@ def add_expense(date, category_id, amount, description, payment_method, is_fixed
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
+        
+        # 저장 전 데이터 확인
+        st.write(f"Saving expense: {date}, {category_id}, {amount}, {description}")  # 디버깅용
+        
         c.execute('''
             INSERT INTO expenses 
             (date, category_id, amount, description, payment_method, is_fixed_expense)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (date, category_id, amount, description, payment_method, is_fixed))
         conn.commit()
+        
+        # 저장 후 데이터 확인
+        c.execute('SELECT * FROM expenses ORDER BY id DESC LIMIT 1')
+        last_record = c.fetchone()
+        st.write("Last saved record:", last_record)  # 디버깅용
+        
         return True
     except Exception as e:
         st.error(f'지출 추가 중 오류가 발생했습니다: {str(e)}')
@@ -232,10 +258,12 @@ def main():
                     if add_expense(date.strftime('%Y-%m-%d'), category_id, amount, 
                                  description, payment_method, is_fixed):
                         st.success('저장 완료!')
+                        st.session_state.reload_data = True
                         st.experimental_rerun()
     
     # 지출 데이터 로드
     expenses_df = get_expenses()
+    st.write(f"Total records in database: {len(expenses_df)}")  # 디버깅용
     
     if len(expenses_df) == 0:
         st.info('아직 지출 데이터가 없습니다. 왼쪽 사이드바에서 지출을 입력해주세요!')
