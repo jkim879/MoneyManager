@@ -247,7 +247,13 @@ def main():
         st.header('새로운 지출 입력')
         with st.form('expense_form'):
             date = st.date_input('날짜', datetime.now())
-            category = st.selectbox('카테고리', categories_df['name'].tolist())
+            # 수정된 코드
+            if len(categories_df) > 0:
+                category = st.selectbox('카테고리', categories_df['name'].tolist(), index=0)
+                st.write(f"Selected category: {category}")  # 디버깅용
+            else:
+                st.error("카테고리 데이터를 불러올 수 없습니다.")
+                return
             
             # 금액 입력 UI 개선
             amount_str = st.text_input('금액', value='', placeholder='금액을 입력하세요')
