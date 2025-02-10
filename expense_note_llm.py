@@ -5,8 +5,6 @@ from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 from openai import OpenAI
-import calendar
-import json
 
 # 페이지 설정
 st.set_page_config(
@@ -16,24 +14,20 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS 스타일 적용
+# CSS 스타일
 st.markdown("""
     <style>
     .stButton>button {
         width: 100%;
+        background-color: #4CAF50;
+        color: white;
         height: 3em;
-        margin-top: 1em;
     }
     .metric-card {
-        background-color: #f0f2f6;
-        border-radius: 10px;
-        padding: 1em;
-        margin: 0.5em 0;
-    }
-    .main-header {
-        color: #1f77b4;
-        text-align: center;
-        margin-bottom: 2em;
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -42,8 +36,6 @@ st.markdown("""
 def init_db():
     conn = sqlite3.connect('expenses.db')
     c = conn.cursor()
-    
-    # 카테고리 테이블 생성
     c.execute('''
         CREATE TABLE IF NOT EXISTS categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,7 +45,6 @@ def init_db():
         )
     ''')
     
-    # 지출 테이블 생성
     c.execute('''
         CREATE TABLE IF NOT EXISTS expenses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,18 +80,15 @@ def init_db():
     conn.commit()
     conn.close()
 
-# 카테고리 가져오기
 def get_categories():
     conn = sqlite3.connect('expenses.db')
     categories = pd.read_sql_query('SELECT * FROM categories', conn)
     conn.close()
     return categories
 
-# LLM 분석 함수 개선
-def analyze_expenses(df, categories_df, period='이번 달'):
+def analyze_spending(df, categories_df):
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
     
-    # 예산 대비 지출 계산
     budget_analysis = []
     for _, cat in categories_df.iterrows():
         spent = df[df['category_id'] == cat['id']]['amount'].sum()
@@ -108,29 +96,24 @@ def analyze_expenses(df, categories_df, period='이번 달'):
             '카테고리': cat['name'],
             '예산': cat['budget'],
             '지출': spent,
-            '달성률': (spent / cat['budget'] * 100) if cat['budget'] > 0 else 0
+            '사용률': (spent / cat['budget'] * 100) if cat['budget'] > 0 else 0
         })
     
     budget_df = pd.DataFrame(budget_analysis)
     
     prompt = f"""
-    다음은 {period} 가계부 데이터입니다:
+    현재 가계부 데이터 분석:
     
-    지출 내역:
-    {df.to_string()}
-    
-    예산 분석:
+    지출 현황:
     {budget_df.to_string()}
     
     다음 항목들을 분석해주세요:
-    1. 전반적인 지출 패턴 분석
-    2. 예산 초과 카테고리와 그 심각성
-    3. 특이사항이나 주목할 만한 지출
-    4. 구체적인 개선 제안
-    5. 다음 달을 위한 예산 조정 제안
+    1. 전반적인 지출 패턴
+    2. 예산 초과 항목과 위험도
+    3. 개선이 필요한 부분
+    4. 다음 달을 위한 구체적인 조언
     
-    분석은 명확하고 구체적으로 해주시되, 실용적인 조언을 포함해주세요.
-    응답은 마크다운 형식으로 해주세요.
+    실용적이고 구체적인 조언을 부탁드립니다.
     """
     
     response = client.chat.completions.create(
@@ -141,94 +124,45 @@ def analyze_expenses(df, categories_df, period='이번 달'):
     
     return response.choices[0].message.content
 
-# 대시보드 지표 계산
-def calculate_metrics(df, categories_df, period_start, period_end):
-    period_mask = (df['date'] >= period_start) & (df['date'] <= period_end)
-    period_df = df[period_mask]
-    
-    # 이전 기간과 비교
-    period_length = (datetime.strptime(period_end, '%Y-%m-%d') - 
-                    datetime.strptime(period_start, '%Y-%m-%d')).days + 1
-    previous_end = datetime.strptime(period_start, '%Y-%m-%d') - timedelta(days=1)
-    previous_start = previous_end - timedelta(days=period_length-1)
-    
-    previous_mask = (df['date'] >= previous_start.strftime('%Y-%m-%d')) & \
-                   (df['date'] <= previous_end.strftime('%Y-%m-%d'))
-    previous_df = df[previous_mask]
-    
-    total_expense = period_df['amount'].sum()
-    prev_total = previous_df['amount'].sum()
-    expense_change = ((total_expense - prev_total) / prev_total * 100 
-                     if prev_total > 0 else 0)
-    
-    # 예산 대비 지출
-    total_budget = categories_df['budget'].sum()
-    budget_used = (total_expense / total_budget * 100) if total_budget > 0 else 0
-    
-    # 카테고리별 예산 초과 현황
-    over_budget_cats = []
-    for _, cat in categories_df.iterrows():
-        cat_expenses = period_df[period_df['category_id'] == cat['id']]['amount'].sum()
-        if cat['budget'] > 0 and cat_expenses > cat['budget']:
-            over_budget_cats.append({
-                'name': cat['name'],
-                'over_amount': cat_expenses - cat['budget'],
-                'percentage': (cat_expenses / cat['budget'] - 1) * 100
-            })
-    
-    return {
-        'total_expense': total_expense,
-        'expense_change': expense_change,
-        'budget_used': budget_used,
-        'over_budget': over_budget_cats,
-        'daily_avg': total_expense / period_length,
-        'transaction_count': len(period_df)
-    }
-
 def main():
-    # 데이터베이스 초기화
     init_db()
     categories_df = get_categories()
     
-    st.title('💰 스마트 가계부 분석기')
+    st.title('💰 스마트 가계부')
     
-    # 사이드바 - 데이터 입력
+    # 사이드바 - 지출 입력
     with st.sidebar:
         st.header('새로운 지출 입력')
-        
-        # 입력 폼
         with st.form('expense_form'):
             date = st.date_input('날짜', datetime.now())
-            category = st.selectbox('카테고리', 
-                options=categories_df['name'].tolist(),
-                format_func=lambda x: f"{x}")
-            
+            category = st.selectbox('카테고리', categories_df['name'].tolist())
             amount = st.number_input('금액', min_value=0, step=1000)
             description = st.text_input('설명')
             payment_method = st.selectbox('결제 수단', 
                 ['현금', '신용카드', '체크카드', '계좌이체', '기타'])
             is_fixed = st.checkbox('고정 지출')
             
-            submit_button = st.form_submit_button('저장')
-            
-            if submit_button and amount > 0:
-                conn = sqlite3.connect('expenses.db')
-                c = conn.cursor()
-                category_id = categories_df[categories_df['name'] == category]['id'].iloc[0]
-                
-                c.execute('''
-                    INSERT INTO expenses 
-                    (date, category_id, amount, description, payment_method, is_fixed_expense)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (date.strftime('%Y-%m-%d'), category_id, amount, 
-                      description, payment_method, is_fixed))
-                
-                conn.commit()
-                conn.close()
-                st.success('저장되었습니다!')
-        
-        # 카테고리 관리
-        with st.expander("카테고리 및 예산 관리"):
+            if st.form_submit_button('저장', use_container_width=True):
+                if amount > 0:
+                    conn = sqlite3.connect('expenses.db')
+                    c = conn.cursor()
+                    category_id = categories_df[categories_df['name'] == category]['id'].iloc[0]
+                    
+                    c.execute('''
+                        INSERT INTO expenses 
+                        (date, category_id, amount, description, payment_method, is_fixed_expense)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (date.strftime('%Y-%m-%d'), category_id, amount, 
+                          description, payment_method, is_fixed))
+                    
+                    conn.commit()
+                    conn.close()
+                    st.success('저장 완료!')
+                else:
+                    st.error('금액을 입력해주세요!')
+
+        # 예산 관리
+        with st.expander("💵 예산 관리"):
             for _, cat in categories_df.iterrows():
                 col1, col2 = st.columns([2, 1])
                 with col1:
@@ -249,25 +183,23 @@ def main():
                         conn.close()
                         st.experimental_rerun()
     
-    # 메인 화면
-    tab1, tab2, tab3 = st.tabs(['📊 대시보드', '📈 상세 분석', '🤖 AI 인사이트'])
+    # 메인 화면 - 탭
+    tab1, tab2, tab3 = st.tabs(['📊 대시보드', '📈 상세 분석', '🤖 AI 분석'])
     
     # 데이터 로드
     conn = sqlite3.connect('expenses.db')
     df = pd.read_sql_query('''
-        SELECT e.*, c.name as category, c.color 
+        SELECT e.*, c.name as category, c.color, c.budget 
         FROM expenses e 
         JOIN categories c ON e.category_id = c.id
     ''', conn)
     conn.close()
     
     # 기간 선택
-    col1, col2, col3 = st.columns([2, 2, 1])
-    with col1:
-        period = st.selectbox('조회 기간', 
-            ['이번 달', '지난 달', '최근 3개월', '최근 6개월', '올해', '전체'])
+    period = st.selectbox('조회 기간', 
+        ['이번 달', '지난 달', '최근 3개월', '최근 6개월', '올해', '전체'])
     
-    # 기간에 따른 날짜 범위 설정
+    # 기간에 따른 필터링
     today = datetime.now()
     if period == '이번 달':
         start_date = today.replace(day=1).strftime('%Y-%m-%d')
@@ -285,40 +217,25 @@ def main():
     elif period == '올해':
         start_date = today.replace(month=1, day=1).strftime('%Y-%m-%d')
         end_date = today.strftime('%Y-%m-%d')
-    else:  # 전체
+    else:
         start_date = df['date'].min()
         end_date = df['date'].max()
     
-    # 데이터 필터링
     mask = (df['date'] >= start_date) & (df['date'] <= end_date)
     filtered_df = df[mask].copy()
     
-    # 메트릭 계산
-    metrics = calculate_metrics(df, categories_df, start_date, end_date)
-    
     with tab1:
         # 주요 지표
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
+        total_expense = filtered_df['amount'].sum()
         with col1:
-            st.metric("총 지출", 
-                     f"{metrics['total_expense']:,.0f}원",
-                     f"{metrics['expense_change']:+.1f}% vs 이전")
+            st.metric("총 지출", f"{total_expense:,.0f}원")
         with col2:
-            st.metric("예산 사용률", 
-                     f"{metrics['budget_used']:.1f}%")
+            avg_daily = total_expense / ((datetime.strptime(end_date, '%Y-%m-%d') - 
+                                        datetime.strptime(start_date, '%Y-%m-%d')).days + 1)
+            st.metric("일평균 지출", f"{avg_daily:,.0f}원")
         with col3:
-            st.metric("일평균 지출",
-                     f"{metrics['daily_avg']:,.0f}원")
-        with col4:
-            st.metric("거래 건수",
-                     f"{metrics['transaction_count']}건")
-        
-        # 예산 초과 경고
-        if metrics['over_budget']:
-            st.warning("⚠️ 예산 초과 카테고리가 있습니다!")
-            for cat in metrics['over_budget']:
-                st.markdown(f"- **{cat['name']}**: {cat['over_amount']:,.0f}원 초과 "
-                          f"(예산 대비 {cat['percentage']:.1f}% 초과)")
+            st.metric("거래 건수", f"{len(filtered_df):,}건")
         
         col1, col2 = st.columns(2)
         
@@ -328,14 +245,104 @@ def main():
                 labels=filtered_df['category'],
                 values=filtered_df['amount'],
                 hole=.4,
-                marker_colors=filtered_df['color'].unique()
+                marker_colors=filtered_df['color']
             )])
             fig1.update_layout(title='카테고리별 지출 비율')
             st.plotly_chart(fig1, use_container_width=True)
         
         with col2:
-            # 일별 지출 트렌드
-            daily_expenses = filtered_df.groupby('date')['amount'].sum().reset_index()
-            fig2 = px.line(daily_expenses, x='date', y='amount',
-                          title='일별 지출 트렌드')
-            fig2.update_
+            # 예산 대비 지출 현황
+            category_spending = filtered_df.groupby('category')['amount'].sum()
+            fig2 = go.Figure()
+            for cat in categories_df.itertuples():
+                spent = category_spending.get(cat.name, 0)
+                budget = cat.budget
+                fig2.add_trace(go.Bar(
+                    name=cat.name,
+                    x=[cat.name],
+                    y=[spent],
+                    marker_color=cat.color
+                ))
+                # 예산 선 추가
+                if budget > 0:
+                    fig2.add_shape(
+                        type="line",
+                        x0=cat.name,
+                        x1=cat.name,
+                        y0=0,
+                        y1=budget,
+                        line=dict(color="red", width=2, dash="dash")
+                    )
+            fig2.update_layout(title='카테고리별 예산 대비 지출', barmode='group')
+            st.plotly_chart(fig2, use_container_width=True)
+    
+    with tab2:
+        # 상세 분석
+        st.header('지출 상세 내역')
+        
+        # 필터
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_categories = st.multiselect(
+                '카테고리 선택',
+                options=filtered_df['category'].unique(),
+                default=filtered_df['category'].unique()
+            )
+        with col2:
+            min_amount = st.number_input('최소 금액', value=0, step=10000)
+        
+        # 필터링된 데이터
+        display_df = filtered_df[
+            (filtered_df['category'].isin(selected_categories)) &
+            (filtered_df['amount'] >= min_amount)
+        ].sort_values('date', ascending=False)
+        
+        # 데이터 테이블
+        st.dataframe(
+            display_df[['date', 'category', 'amount', 'description', 'payment_method']],
+            hide_index=True,
+            column_config={
+                'date': '날짜',
+                'category': '카테고리',
+                'amount': st.column_config.NumberColumn(
+                    '금액',
+                    format='₩%d'
+                ),
+                'description': '설명',
+                'payment_method': '결제수단'
+            }
+        )
+        
+        # 지출 패턴 분석
+        st.subheader('지출 패턴 분석')
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # 요일별 지출
+            df['weekday'] = pd.to_datetime(df['date']).dt.day_name()
+            weekday_spending = df.groupby('weekday')['amount'].mean().reindex([
+                'Monday', 'Tuesday', 'Wednesday', 'Thursday', 
+                'Friday', 'Saturday', 'Sunday'
+            ])
+            fig3 = px.bar(weekday_spending, 
+                         title='요일별 평균 지출',
+                         labels={'value': '평균 지출액', 'index': '요일'})
+            st.plotly_chart(fig3, use_container_width=True)
+        
+        with col2:
+            # 시간대별 지출 (고정지출 vs 변동지출)
+            fixed_vs_variable = filtered_df.groupby('is_fixed_expense')['amount'].sum()
+            fig4 = px.pie(values=fixed_vs_variable.values,
+                         names=['변동지출', '고정지출'],
+                         title='고정지출 vs 변동지출 비율')
+            st.plotly_chart(fig4, use_container_width=True)
+    
+    with tab3:
+        st.header('AI 지출 분석')
+        if st.button('분석 시작', use_container_width=True):
+            with st.spinner('분석 중...'):
+                analysis = analyze_spending(filtered_df, categories_df)
+                st.markdown(analysis)
+
+if __name__ == '__main__':
+    main()
