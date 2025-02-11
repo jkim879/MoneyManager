@@ -15,13 +15,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 디버그 모드 (문제 해결 후 False로 변경)
-DEBUG = True
-
 # 데이터베이스 경로 설정
 DB_PATH = os.path.abspath('expenses.db')
-if DEBUG:
-    st.write(f"[DEBUG] Database path: {DB_PATH}")
 
 # ------------------------------------------------------------------
 # 데이터베이스 초기화
@@ -73,7 +68,7 @@ def init_db():
                 conn.commit()
         return True
     except Exception as e:
-        st.error(f"[ERROR] DB 초기화 오류: {e}")
+        st.error(f"DB 초기화 오류: {e}")
         return False
 
 # ------------------------------------------------------------------
@@ -114,7 +109,7 @@ def analyze_expenses_with_llm(df, period='이번 달'):
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"[ERROR] 분석 중 오류: {e}"
+        return f"분석 중 오류: {e}"
 
 # ------------------------------------------------------------------
 # DB에서 카테고리 데이터를 가져오기
@@ -123,11 +118,9 @@ def get_categories():
         with sqlite3.connect(DB_PATH) as conn:
             query = "SELECT * FROM categories ORDER BY name"
             categories = pd.read_sql_query(query, conn)
-        if DEBUG:
-            st.write(f"[DEBUG] 카테고리 건수: {len(categories)}")
         return categories
     except Exception as e:
-        st.error(f"[ERROR] 카테고리 불러오기 오류: {e}")
+        st.error(f"카테고리 불러오기 오류: {e}")
         return pd.DataFrame(columns=['id', 'name', 'budget', 'color'])
 
 # DB에서 지출 데이터를 가져오기
@@ -150,15 +143,13 @@ def get_expenses():
                 ORDER BY e.date DESC
             '''
             expenses = pd.read_sql_query(query, conn)
-        if DEBUG:
-            st.write(f"[DEBUG] 전체 지출 건수: {len(expenses)}")
         return expenses
     except Exception as e:
-        st.error(f"[ERROR] 지출 불러오기 오류: {e}")
+        st.error(f"지출 불러오기 오류: {e}")
         return pd.DataFrame(columns=['id', 'date', 'amount', 'description', 'payment_method',
                                      'is_fixed_expense', 'category', 'color', 'budget'])
 
-# 지출 추가 (삽입 후 바로 SELECT하여 디버그 출력)
+# 지출 추가 (삽입 후 바로 SELECT하여 확인)
 def add_expense(date, category_id, amount, description, payment_method, is_fixed):
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -169,12 +160,9 @@ def add_expense(date, category_id, amount, description, payment_method, is_fixed
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (date, category_id, amount, description, payment_method, is_fixed))
             conn.commit()
-            new_record = c.execute("SELECT * FROM expenses ORDER BY id DESC LIMIT 1").fetchone()
-            if DEBUG:
-                st.write(f"[DEBUG] Inserted expense record: {new_record}")
         return True
     except Exception as e:
-        st.error(f"[ERROR] 지출 추가 오류: {e}")
+        st.error(f"지출 추가 오류: {e}")
         return False
 
 # 지출 삭제
@@ -184,9 +172,9 @@ def delete_expense(expense_id):
             c = conn.cursor()
             c.execute("DELETE FROM expenses WHERE id = ?", (expense_id,))
             conn.commit()
-        st.success("지출 삭제 완료")
+        st.success("선택한 지출 항목이 삭제되었습니다.")
     except Exception as e:
-        st.error(f"[ERROR] 지출 삭제 오류: {e}")
+        st.error(f"지출 삭제 오류: {e}")
 
 # ------------------------------------------------------------------
 # 사용자 지정 기간 필터 함수
@@ -229,7 +217,7 @@ def main():
     st.title("💰 스마트 가계부")
 
     if not init_db():
-        st.error("DB 초기화 실패")
+        st.error("DB 초기화에 실패했습니다.")
         return
 
     # ────────────── 사이드바 영역 ──────────────
@@ -239,7 +227,7 @@ def main():
             expense_date = st.date_input("날짜", datetime.now())
             categories_df = get_categories()
             if categories_df.empty:
-                st.error("카테고리 불러오기 실패")
+                st.error("카테고리를 불러올 수 없습니다.")
                 return
             selected_category = st.selectbox("카테고리", categories_df["name"].tolist())
             amount_str = st.text_input("금액", value="", placeholder="숫자만 입력 (예: 50000)")
@@ -255,17 +243,10 @@ def main():
                 if amount <= 0:
                     st.error("금액을 정확히 입력하세요.")
                 else:
-                    # 카테고리 ID를 int로 변환하여 전달
+                    # 카테고리 ID를 int형으로 변환하여 전달
                     category_id = int(categories_df.loc[categories_df["name"] == selected_category, "id"].iloc[0])
                     if add_expense(expense_date.strftime("%Y-%m-%d"), category_id, amount, description, payment_method, is_fixed):
-                        st.session_state.success_msg = "지출이 저장되었습니다."
-                        # 자동 새로고침 대신 사용자가 '데이터 새로고침' 버튼을 누르도록 함
-
-        if "success_msg" in st.session_state:
-            st.success(st.session_state.success_msg)
-            if st.button("데이터 새로고침"):
-                st.experimental_rerun()
-
+                        st.success("지출이 저장되었습니다.")
         st.header("데이터 내보내기")
         expenses_df_all = get_expenses()
         if not expenses_df_all.empty:
@@ -279,8 +260,6 @@ def main():
 
     # ────────────── 메인 영역 ──────────────
     expenses_df = get_expenses()
-    st.write(f"[DEBUG] 전체 지출 레코드 수: {len(expenses_df)}")
-
     period_option = st.selectbox("조회 기간", ["전체", "이번 달", "지난 달", "최근 3개월", "최근 6개월", "올해", "사용자 지정"])
     start_date, end_date = get_date_range(period_option, expenses_df)
     
@@ -398,16 +377,27 @@ def main():
                                  "예산 대비 사용률": st.column_config.NumberColumn("예산 대비 사용률", format="%.1f%%")
                              })
 
+    # ────────────── 지출 관리 영역 (삭제 기능 개선) ──────────────
     st.markdown("---")
     st.subheader("지출 관리")
-    manage_option = st.selectbox("관리 옵션 선택", ["전체 목록", "삭제할 항목 선택"])
-    if manage_option == "전체 목록":
-        st.dataframe(filtered_df[["id", "date", "category", "amount", "description", "payment_method"]], use_container_width=True)
+    st.write("아래에서 삭제할 지출 항목을 선택하세요.")
+    # 지출 목록(필터된 데이터가 아닌 전체 데이터 표시)
+    expenses_for_delete = get_expenses()
+    if expenses_for_delete.empty:
+        st.info("삭제할 지출 항목이 없습니다.")
     else:
-        del_ids = st.multiselect("삭제할 지출 항목 ID 선택", options=filtered_df["id"].tolist())
+        # 항목을 "ID - 날짜 / 카테고리 / 금액" 형식으로 표시하여 선택할 수 있게 함
+        expense_options = [
+            f"{row['id']} - {row['date']} / {row['category']} / {row['amount']:,}원"
+            for _, row in expenses_for_delete.iterrows()
+        ]
+        selected_for_delete = st.multiselect("삭제할 항목 선택", options=expense_options)
         if st.button("선택 항목 삭제"):
-            for eid in del_ids:
+            # 선택된 문자열에서 앞의 ID 부분만 추출하여 정수형 리스트로 변환
+            ids_to_delete = [int(item.split(" - ")[0]) for item in selected_for_delete]
+            for eid in ids_to_delete:
                 delete_expense(eid)
+            st.success("선택한 항목이 삭제되었습니다.")
             st.experimental_rerun()
 
 if __name__ == "__main__":
