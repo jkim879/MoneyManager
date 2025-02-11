@@ -219,8 +219,8 @@ def get_date_range(period, expenses_df):
             st.error("시작 날짜는 종료 날짜보다 이전이어야 합니다.")
             start_date, end_date = today - timedelta(days=30), today
     else:  # '전체'
-        start_date = pd.to_datetime(expenses_df['date']).min()
-        end_date = pd.to_datetime(expenses_df['date']).max()
+        start_date = pd.to_datetime(expenses_df['date']).min() if not expenses_df.empty else today
+        end_date = pd.to_datetime(expenses_df['date']).max() if not expenses_df.empty else today
     return start_date, end_date
 
 # CSV 내보내기 함수
@@ -231,11 +231,6 @@ def convert_df_to_csv(df):
 # 메인 함수
 def main():
     st.title('💰 스마트 가계부')
-
-    # 만약 이전에 저장 성공 메시지가 있었다면 출력
-    if 'success_msg' in st.session_state:
-        st.success(st.session_state.success_msg)
-        del st.session_state.success_msg
 
     # 데이터베이스 초기화
     if not init_db():
@@ -268,9 +263,12 @@ def main():
                 else:
                     category_id = categories_df.loc[categories_df['name'] == selected_category, 'id'].iloc[0]
                     if add_expense(expense_date.strftime('%Y-%m-%d'), category_id, amount, description, payment_method, is_fixed):
-                        # 성공 메시지를 세션 상태에 저장한 후 rerun
                         st.session_state.success_msg = "지출이 저장되었습니다."
                         st.experimental_rerun()
+        # 성공 메시지를 지출 입력 폼 바로 아래에 표시 (데이터 내보내기 위)
+        if 'success_msg' in st.session_state:
+            st.success(st.session_state.success_msg)
+            del st.session_state.success_msg
 
         st.header("데이터 내보내기")
         expenses_df_all = get_expenses()
@@ -284,132 +282,136 @@ def main():
             )
 
     # ------------------------------------------------------------------
-    # 메인 영역: 지출 데이터 로드 및 기간 선택
+    # 메인 영역: 지출 데이터 로드 및 기간 선택 (데이터가 없어도 탭은 보입니다)
     expenses_df = get_expenses()
     if expenses_df.empty:
         st.info('아직 지출 데이터가 없습니다. 사이드바에서 지출을 입력해주세요!')
-        return
 
-    # 기간 선택 (사용자 지정 옵션 포함)
     period_option = st.selectbox('조회 기간', ['이번 달', '지난 달', '최근 3개월', '최근 6개월', '올해', '전체', '사용자 지정'])
     start_date, end_date = get_date_range(period_option, expenses_df)
     
-    # 데이터 필터링 (입력한 지출의 날짜가 선택된 기간에 포함되는지 확인)
-    expenses_df['date'] = pd.to_datetime(expenses_df['date'])
+    expenses_df['date'] = pd.to_datetime(expenses_df['date'], errors='coerce')
     filtered_df = expenses_df[(expenses_df['date'] >= pd.to_datetime(start_date)) & 
                               (expenses_df['date'] <= pd.to_datetime(end_date))]
 
     # ------------------------------------------------------------------
-    # 탭 구성: 대시보드, 상세 분석, AI 분석
+    # 탭 구성: 대시보드, 상세 분석, AI 분석 (데이터 없을 경우에도 탭은 보임)
     tab1, tab2, tab3 = st.tabs(['📊 대시보드', '📈 상세 분석', '🤖 AI 분석'])
-    
+
     with tab1:
         st.subheader("주요 지표")
-        col1, col2, col3 = st.columns(3)
-        total_expense = filtered_df['amount'].sum()
-        days_count = (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1
-        avg_daily = total_expense / days_count if days_count > 0 else 0
-        with col1:
-            st.metric("총 지출", f"{total_expense:,.0f}원")
-        with col2:
-            st.metric("일평균 지출", f"{avg_daily:,.0f}원")
-        with col3:
-            st.metric("거래 건수", f"{len(filtered_df):,}건")
-        
-        st.markdown("---")
-        col_left, col_right = st.columns(2)
-        with col_left:
-            # 카테고리별 지출 도넛 차트
-            cat_spending = filtered_df.groupby('category')['amount'].sum()
-            if not cat_spending.empty:
-                fig_pie = go.Figure(data=[go.Pie(
-                    labels=cat_spending.index,
-                    values=cat_spending.values,
-                    hole=.4,
-                    marker_colors=filtered_df.groupby('category')['color'].first()
-                )])
-                fig_pie.update_layout(title='카테고리별 지출 비율')
-                st.plotly_chart(fig_pie, use_container_width=True)
-            # 예산 대비 지출 현황 차트
-            budget_vs_spending = pd.DataFrame({
-                'category': cat_spending.index,
-                'spent': cat_spending.values,
-                'budget': [get_categories().loc[get_categories()['name'] == cat, 'budget'].iloc[0] for cat in cat_spending.index]
-            })
-            budget_vs_spending['usage_rate'] = (budget_vs_spending['spent'] / budget_vs_spending['budget'] * 100).round(2)
-            fig_bar = go.Figure()
-            fig_bar.add_trace(go.Bar(
-                name='지출',
-                x=budget_vs_spending['category'],
-                y=budget_vs_spending['spent'],
-                marker_color='#4CAF50'
-            ))
-            fig_bar.add_trace(go.Bar(
-                name='예산',
-                x=budget_vs_spending['category'],
-                y=budget_vs_spending['budget'],
-                marker_color='rgba(156, 156, 156, 0.5)'
-            ))
-            fig_bar.update_layout(title='카테고리별 예산 대비 지출', barmode='overlay')
-            st.plotly_chart(fig_bar, use_container_width=True)
-        with col_right:
-            # 일별 지출 트렌드
-            daily_trend = filtered_df.groupby('date')['amount'].sum().reset_index()
-            if not daily_trend.empty:
-                fig_line = px.line(daily_trend, x='date', y='amount', title='일별 지출 트렌드')
-                fig_line.update_traces(line_color='#4CAF50')
-                st.plotly_chart(fig_line, use_container_width=True)
-            # 결제 수단별 지출 비율
-            payment_spending = filtered_df.groupby('payment_method')['amount'].sum()
-            fig_payment = px.pie(values=payment_spending.values, names=payment_spending.index, title='결제 수단별 지출 비율')
-            st.plotly_chart(fig_payment, use_container_width=True)
-    
+        if filtered_df.empty:
+            st.info("선택된 기간에 해당하는 지출 데이터가 없습니다.")
+        else:
+            col1, col2, col3 = st.columns(3)
+            total_expense = filtered_df['amount'].sum()
+            days_count = (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1
+            avg_daily = total_expense / days_count if days_count > 0 else 0
+            with col1:
+                st.metric("총 지출", f"{total_expense:,.0f}원")
+            with col2:
+                st.metric("일평균 지출", f"{avg_daily:,.0f}원")
+            with col3:
+                st.metric("거래 건수", f"{len(filtered_df):,}건")
+            
+            st.markdown("---")
+            col_left, col_right = st.columns(2)
+            with col_left:
+                # 카테고리별 지출 도넛 차트
+                cat_spending = filtered_df.groupby('category')['amount'].sum()
+                if not cat_spending.empty:
+                    fig_pie = go.Figure(data=[go.Pie(
+                        labels=cat_spending.index,
+                        values=cat_spending.values,
+                        hole=.4,
+                        marker_colors=filtered_df.groupby('category')['color'].first()
+                    )])
+                    fig_pie.update_layout(title='카테고리별 지출 비율')
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                # 예산 대비 지출 현황 차트
+                budget_vs_spending = pd.DataFrame({
+                    'category': cat_spending.index,
+                    'spent': cat_spending.values,
+                    'budget': [get_categories().loc[get_categories()['name'] == cat, 'budget'].iloc[0] for cat in cat_spending.index]
+                })
+                budget_vs_spending['usage_rate'] = (budget_vs_spending['spent'] / budget_vs_spending['budget'] * 100).round(2)
+                fig_bar = go.Figure()
+                fig_bar.add_trace(go.Bar(
+                    name='지출',
+                    x=budget_vs_spending['category'],
+                    y=budget_vs_spending['spent'],
+                    marker_color='#4CAF50'
+                ))
+                fig_bar.add_trace(go.Bar(
+                    name='예산',
+                    x=budget_vs_spending['category'],
+                    y=budget_vs_spending['budget'],
+                    marker_color='rgba(156, 156, 156, 0.5)'
+                ))
+                fig_bar.update_layout(title='카테고리별 예산 대비 지출', barmode='overlay')
+                st.plotly_chart(fig_bar, use_container_width=True)
+            with col_right:
+                # 일별 지출 트렌드
+                daily_trend = filtered_df.groupby('date')['amount'].sum().reset_index()
+                if not daily_trend.empty:
+                    fig_line = px.line(daily_trend, x='date', y='amount', title='일별 지출 트렌드')
+                    fig_line.update_traces(line_color='#4CAF50')
+                    st.plotly_chart(fig_line, use_container_width=True)
+                # 결제 수단별 지출 비율
+                payment_spending = filtered_df.groupby('payment_method')['amount'].sum()
+                fig_payment = px.pie(values=payment_spending.values, names=payment_spending.index, title='결제 수단별 지출 비율')
+                st.plotly_chart(fig_payment, use_container_width=True)
+
     with tab2:
         st.subheader("지출 상세 내역")
-        col_filter1, col_filter2 = st.columns(2)
-        with col_filter1:
-            selected_categories = st.multiselect(
-                '카테고리 선택',
-                options=filtered_df['category'].unique(),
-                default=filtered_df['category'].unique()
+        if filtered_df.empty:
+            st.info("선택된 기간에 해당하는 지출 데이터가 없습니다.")
+        else:
+            col_filter1, col_filter2 = st.columns(2)
+            with col_filter1:
+                selected_categories = st.multiselect(
+                    '카테고리 선택',
+                    options=filtered_df['category'].unique(),
+                    default=filtered_df['category'].unique()
+                )
+            with col_filter2:
+                min_amount = st.number_input('최소 금액', value=0, step=10000)
+            display_df = filtered_df[(filtered_df['category'].isin(selected_categories)) & (filtered_df['amount'] >= min_amount)]
+            st.experimental_data_editor(
+                display_df[['id', 'date', 'category', 'amount', 'description', 'payment_method']],
+                num_rows="dynamic",
+                use_container_width=True,
+                disabled=True
             )
-        with col_filter2:
-            min_amount = st.number_input('최소 금액', value=0, step=10000)
-        display_df = filtered_df[(filtered_df['category'].isin(selected_categories)) & (filtered_df['amount'] >= min_amount)]
-        # 읽기 전용 데이터 에디터 (삭제 기능은 하단의 '지출 관리' 탭에서 제공)
-        st.experimental_data_editor(
-            display_df[['id', 'date', 'category', 'amount', 'description', 'payment_method']],
-            num_rows="dynamic",
-            use_container_width=True,
-            disabled=True
-        )
-    
+
     with tab3:
         st.subheader("🤖 AI 지출 분석")
-        if st.button('분석 시작', key="ai_analysis"):
-            with st.spinner('분석 중...'):
-                analysis = analyze_expenses_with_llm(filtered_df.copy(), period_option)
-            st.markdown(analysis)
-            st.markdown("---")
-            st.subheader("카테고리별 상세 분석")
-            cat_analysis = filtered_df.groupby('category').agg({
-                'amount': ['sum', 'mean', 'count'],
-                'date': 'nunique'
-            }).round(0)
-            cat_analysis.columns = ['총 지출', '평균 지출', '거래 수', '지출 일수']
-            cat_analysis = cat_analysis.reset_index()
-            # 예산 정보 추가
-            cat_analysis['예산'] = cat_analysis['category'].map(get_categories().set_index('name')['budget'])
-            cat_analysis['예산 대비 사용률'] = (cat_analysis['총 지출'] / cat_analysis['예산'] * 100).round(1)
-            st.dataframe(cat_analysis, use_container_width=True,
-                         column_config={
-                             'category': '카테고리',
-                             '총 지출': st.column_config.NumberColumn('총 지출', format='₩%d'),
-                             '평균 지출': st.column_config.NumberColumn('평균 지출', format='₩%d'),
-                             '예산': st.column_config.NumberColumn('예산', format='₩%d'),
-                             '예산 대비 사용률': st.column_config.NumberColumn('예산 대비 사용률', format='%.1f%%')
-                         })
-    
+        if filtered_df.empty:
+            st.info("선택된 기간에 분석할 데이터가 없습니다.")
+        else:
+            if st.button('분석 시작', key="ai_analysis"):
+                with st.spinner('분석 중...'):
+                    analysis = analyze_expenses_with_llm(filtered_df.copy(), period_option)
+                st.markdown(analysis)
+                st.markdown("---")
+                st.subheader("카테고리별 상세 분석")
+                cat_analysis = filtered_df.groupby('category').agg({
+                    'amount': ['sum', 'mean', 'count'],
+                    'date': 'nunique'
+                }).round(0)
+                cat_analysis.columns = ['총 지출', '평균 지출', '거래 수', '지출 일수']
+                cat_analysis = cat_analysis.reset_index()
+                cat_analysis['예산'] = cat_analysis['category'].map(get_categories().set_index('name')['budget'])
+                cat_analysis['예산 대비 사용률'] = (cat_analysis['총 지출'] / cat_analysis['예산'] * 100).round(1)
+                st.dataframe(cat_analysis, use_container_width=True,
+                             column_config={
+                                 'category': '카테고리',
+                                 '총 지출': st.column_config.NumberColumn('총 지출', format='₩%d'),
+                                 '평균 지출': st.column_config.NumberColumn('평균 지출', format='₩%d'),
+                                 '예산': st.column_config.NumberColumn('예산', format='₩%d'),
+                                 '예산 대비 사용률': st.column_config.NumberColumn('예산 대비 사용률', format='%.1f%%')
+                             })
+
     # ------------------------------------------------------------------
     # 추가: 지출 관리 (삭제 기능)
     st.markdown("---")
@@ -418,7 +420,6 @@ def main():
     if manage_option == "전체 목록":
         st.dataframe(filtered_df[['id', 'date', 'category', 'amount', 'description', 'payment_method']], use_container_width=True)
     else:
-        # 삭제할 항목 선택 후 삭제 버튼 클릭 시 처리
         del_ids = st.multiselect("삭제할 지출 항목 ID 선택", options=filtered_df['id'].tolist())
         if st.button("선택 항목 삭제"):
             for eid in del_ids:
