@@ -118,19 +118,6 @@ def init_db():
         return False
 
 # ------------------------------------------------------------------
-# 예산 업데이트 함수 (카테고리 예산 수정)
-def update_category_budget(category_id, new_budget):
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            c = conn.cursor()
-            c.execute("UPDATE categories SET budget = ? WHERE id = ?", (new_budget, category_id))
-            conn.commit()
-        return True
-    except Exception as e:
-        st.error(f"예산 업데이트 오류: {e}")
-        return False
-
-# ------------------------------------------------------------------
 # LLM 기반 AI 분석 함수
 def analyze_expenses_with_llm(df, period='이번 달'):
     try:
@@ -141,13 +128,10 @@ def analyze_expenses_with_llm(df, period='이번 달'):
         daily_pattern = df.groupby(df['date'].dt.day_name())['amount'].mean()
         analysis_text = f"""
 분석 기간: {period}
-
 총 지출: {df['amount'].sum():,.0f}원
 거래 건수: {len(df)}건
-
 카테고리별 지출:
 {category_spending.to_string(index=False)}
-
 일별 평균 지출:
 {daily_pattern.to_string()}
 """
@@ -328,21 +312,6 @@ def main():
                 else:
                     if add_expense(expense_date.strftime("%Y-%m-%d"), category_id, subcategory_id, amount, description, payment_method, is_fixed):
                         st.success("지출이 저장되었습니다.")
-
-        # 목표 예산 설정 영역
-        st.header("목표 예산 설정")
-        cat_df = get_categories()
-        if not cat_df.empty:
-            with st.form("budget_form"):
-                new_budgets = {}
-                for _, row in cat_df.iterrows():
-                    new_budget = st.number_input(f"{row['name']} 목표 예산", value=int(row["budget"]))
-                    new_budgets[row["id"]] = new_budget
-                if st.form_submit_button("예산 업데이트"):
-                    for cat_id, budget_val in new_budgets.items():
-                        update_category_budget(cat_id, budget_val)
-                    st.success("예산이 업데이트되었습니다.")
-
         st.header("데이터 내보내기")
         expenses_df_all = get_expenses()
         if not expenses_df_all.empty:
@@ -358,7 +327,7 @@ def main():
     expenses_df = get_expenses()
     period_option = st.selectbox("조회 기간", ["전체", "이번 달", "지난 달", "최근 3개월", "최근 6개월", "올해", "사용자 지정"])
     start_date, end_date = get_date_range(period_option, expenses_df)
-    
+
     expenses_df["date"] = pd.to_datetime(expenses_df["date"], errors="coerce")
     filtered_df = expenses_df[(expenses_df["date"] >= pd.to_datetime(start_date)) & (expenses_df["date"] <= pd.to_datetime(end_date))]
 
@@ -413,10 +382,6 @@ def main():
                 ))
                 fig_bar.update_layout(title="카테고리별 예산 대비 지출", barmode="overlay")
                 st.plotly_chart(fig_bar, use_container_width=True)
-                # 예산 초과 경고 메시지 표시
-                exceeded = budget_vs_spending[budget_vs_spending["spent"] > budget_vs_spending["budget"]]
-                if not exceeded.empty:
-                    st.warning("다음 카테고리에서 목표 예산을 초과했습니다: " + ", ".join(exceeded["category"].astype(str).tolist()))
             with col_right:
                 daily_trend = filtered_df.groupby("date")["amount"].sum().reset_index()
                 if not daily_trend.empty:
@@ -487,7 +452,6 @@ def main():
     else:
         st.subheader("전체 지출 항목")
         st.dataframe(expenses_for_delete[["id", "date", "category", "subcategory", "amount", "description", "payment_method"]], use_container_width=True)
-        
         with st.expander("삭제할 항목 선택"):
             st.markdown("아래에서 삭제할 항목의 체크박스를 선택하세요:")
             header_cols = st.columns([0.1, 0.9])
