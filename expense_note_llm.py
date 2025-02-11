@@ -42,22 +42,28 @@ def init_db():
                     FOREIGN KEY (category_id) REFERENCES categories (id)
                 )
             ''')
-            # 지출 테이블 생성 (세부 카테고리 컬럼 추가)
+            # 지출 테이블 생성 (최초 생성 시에는 subcategory_id 컬럼 포함)
             c.execute('''
                 CREATE TABLE IF NOT EXISTS expenses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     date TEXT NOT NULL,
                     category_id INTEGER NOT NULL,
-                    subcategory_id INTEGER,
                     amount REAL NOT NULL,
                     description TEXT,
                     payment_method TEXT DEFAULT '현금',
                     is_fixed_expense BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    subcategory_id INTEGER,
                     FOREIGN KEY (category_id) REFERENCES categories (id),
                     FOREIGN KEY (subcategory_id) REFERENCES subcategories (id)
                 )
             ''')
+            # 만약 기존 테이블에 subcategory_id 컬럼이 없다면 추가 (ALTER TABLE)
+            c.execute("PRAGMA table_info(expenses)")
+            columns = [row[1] for row in c.fetchall()]
+            if "subcategory_id" not in columns:
+                c.execute("ALTER TABLE expenses ADD COLUMN subcategory_id INTEGER;")
+                conn.commit()
             # 메인 카테고리 기본 데이터 삽입
             c.execute('SELECT COUNT(*) FROM categories')
             if c.fetchone()[0] == 0:
@@ -441,7 +447,6 @@ def main():
     st.subheader("지출 관리")
     st.write("전체 지출 항목과 함께, 아래 '삭제할 항목 선택' 영역에서 각 항목 옆의 체크박스를 선택한 후 삭제 버튼을 누르면 해당 항목이 삭제됩니다.")
 
-    # 전체 지출 항목 테이블 표시
     expenses_for_delete = get_expenses()
     if expenses_for_delete.empty:
         st.info("삭제할 지출 항목이 없습니다.")
