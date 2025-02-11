@@ -231,12 +231,17 @@ def convert_df_to_csv(df):
 # 메인 함수
 def main():
     st.title('💰 스마트 가계부')
-    
+
+    # 만약 이전에 저장 성공 메시지가 있었다면 출력
+    if 'success_msg' in st.session_state:
+        st.success(st.session_state.success_msg)
+        del st.session_state.success_msg
+
     # 데이터베이스 초기화
     if not init_db():
         st.error('데이터베이스 초기화에 실패했습니다.')
         return
-    
+
     # ------------------------------------------------------------------
     # 사이드바: 지출 입력 및 CSV 내보내기 기능
     with st.sidebar:
@@ -263,9 +268,10 @@ def main():
                 else:
                     category_id = categories_df.loc[categories_df['name'] == selected_category, 'id'].iloc[0]
                     if add_expense(expense_date.strftime('%Y-%m-%d'), category_id, amount, description, payment_method, is_fixed):
-                        st.success('지출이 저장되었습니다.')
+                        # 성공 메시지를 세션 상태에 저장한 후 rerun
+                        st.session_state.success_msg = "지출이 저장되었습니다."
                         st.experimental_rerun()
-        
+
         st.header("데이터 내보내기")
         expenses_df_all = get_expenses()
         if not expenses_df_all.empty:
@@ -276,23 +282,23 @@ def main():
                 file_name='expenses.csv',
                 mime='text/csv'
             )
-    
+
     # ------------------------------------------------------------------
     # 메인 영역: 지출 데이터 로드 및 기간 선택
     expenses_df = get_expenses()
     if expenses_df.empty:
         st.info('아직 지출 데이터가 없습니다. 사이드바에서 지출을 입력해주세요!')
         return
-    
+
     # 기간 선택 (사용자 지정 옵션 포함)
     period_option = st.selectbox('조회 기간', ['이번 달', '지난 달', '최근 3개월', '최근 6개월', '올해', '전체', '사용자 지정'])
     start_date, end_date = get_date_range(period_option, expenses_df)
     
-    # 데이터 필터링
+    # 데이터 필터링 (입력한 지출의 날짜가 선택된 기간에 포함되는지 확인)
     expenses_df['date'] = pd.to_datetime(expenses_df['date'])
     filtered_df = expenses_df[(expenses_df['date'] >= pd.to_datetime(start_date)) & 
                               (expenses_df['date'] <= pd.to_datetime(end_date))]
-    
+
     # ------------------------------------------------------------------
     # 탭 구성: 대시보드, 상세 분석, AI 분석
     tab1, tab2, tab3 = st.tabs(['📊 대시보드', '📈 상세 분석', '🤖 AI 분석'])
