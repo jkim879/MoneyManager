@@ -48,12 +48,12 @@ def init_db():
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     date TEXT NOT NULL,
                     category_id INTEGER NOT NULL,
+                    subcategory_id INTEGER,
                     amount REAL NOT NULL,
                     description TEXT,
                     payment_method TEXT DEFAULT '현금',
                     is_fixed_expense BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    subcategory_id INTEGER,
                     FOREIGN KEY (category_id) REFERENCES categories (id),
                     FOREIGN KEY (subcategory_id) REFERENCES subcategories (id)
                 )
@@ -87,7 +87,7 @@ def init_db():
                     except sqlite3.IntegrityError:
                         pass
                 conn.commit()
-            # 기본 세부 카테고리 삽입 (각 메인 카테고리별로 서로 다른 세부 카테고리)
+            # 기본 세부 카테고리 삽입 (메인 카테고리별 서로 다른 하위 항목)
             c.execute('SELECT COUNT(*) FROM subcategories')
             if c.fetchone()[0] == 0:
                 default_subcategories = {
@@ -282,21 +282,24 @@ def main():
     # ────────────── 사이드바 영역 ──────────────
     with st.sidebar:
         st.header("새로운 지출 입력")
+        # 메인 카테고리 및 세부 카테고리 선택 (폼 외부에서 동적 반영)
+        categories_df = get_categories()
+        if categories_df.empty:
+            st.error("카테고리를 불러올 수 없습니다.")
+            return
+        selected_category = st.selectbox("메인 카테고리", categories_df["name"].tolist(), key="main_cat")
+        category_id = int(categories_df.loc[categories_df["name"] == selected_category, "id"].iloc[0])
+        subcats_df = get_subcategories(category_id)
+        if not subcats_df.empty:
+            selected_subcategory = st.selectbox("세부 카테고리", subcats_df["name"].tolist(), key="sub_cat")
+            subcategory_id = int(subcats_df.loc[subcats_df["name"] == selected_subcategory, "id"].iloc[0])
+        else:
+            selected_subcategory = None
+            subcategory_id = None
+
+        # 나머지 입력 필드는 폼 내부에 두어 한 번에 저장
         with st.form("expense_form"):
             expense_date = st.date_input("날짜", datetime.now())
-            categories_df = get_categories()
-            if categories_df.empty:
-                st.error("카테고리를 불러올 수 없습니다.")
-                return
-            selected_category = st.selectbox("카테고리", categories_df["name"].tolist())
-            # 메인 카테고리 선택 후, 해당 카테고리의 세부 카테고리 조회
-            category_id = int(categories_df.loc[categories_df["name"] == selected_category, "id"].iloc[0])
-            subcats_df = get_subcategories(category_id)
-            if not subcats_df.empty:
-                selected_subcategory = st.selectbox("세부 카테고리", subcats_df["name"].tolist())
-                subcategory_id = int(subcats_df.loc[subcats_df["name"] == selected_subcategory, "id"].iloc[0])
-            else:
-                subcategory_id = None
             amount_str = st.text_input("금액", value="", placeholder="숫자만 입력 (예: 50000)")
             try:
                 amount = int(amount_str.replace(",", "")) if amount_str else 0
@@ -446,14 +449,12 @@ def main():
     st.markdown("---")
     st.subheader("지출 관리")
     st.write("전체 지출 항목과 함께, 아래 '삭제할 항목 선택' 영역에서 각 항목 옆의 체크박스를 선택한 후 삭제 버튼을 누르면 해당 항목이 삭제됩니다.")
-
     expenses_for_delete = get_expenses()
     if expenses_for_delete.empty:
         st.info("삭제할 지출 항목이 없습니다.")
     else:
         st.subheader("전체 지출 항목")
         st.dataframe(expenses_for_delete[["id", "date", "category", "subcategory", "amount", "description", "payment_method"]], use_container_width=True)
-        
         with st.expander("삭제할 항목 선택"):
             st.markdown("아래에서 삭제할 항목의 체크박스를 선택하세요:")
             header_cols = st.columns([0.1, 0.9])
