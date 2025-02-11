@@ -33,21 +33,32 @@ def init_db():
                     color TEXT
                 )
             ''')
-            # 지출 테이블 생성
+            # 세부 카테고리 테이블 생성
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS subcategories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    FOREIGN KEY (category_id) REFERENCES categories (id)
+                )
+            ''')
+            # 지출 테이블 생성 (subcategory_id 컬럼 추가)
             c.execute('''
                 CREATE TABLE IF NOT EXISTS expenses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     date TEXT NOT NULL,
                     category_id INTEGER NOT NULL,
+                    subcategory_id INTEGER,
                     amount REAL NOT NULL,
                     description TEXT,
                     payment_method TEXT DEFAULT '현금',
                     is_fixed_expense BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (category_id) REFERENCES categories (id)
+                    FOREIGN KEY (category_id) REFERENCES categories (id),
+                    FOREIGN KEY (subcategory_id) REFERENCES subcategories (id)
                 )
             ''')
-            # 기본 카테고리 추가 여부 확인
+            # 기본 카테고리 삽입
             c.execute('SELECT COUNT(*) FROM categories')
             if c.fetchone()[0] == 0:
                 default_categories = [
@@ -59,16 +70,43 @@ def init_db():
                     ('주택청약', 300000, '#9B89B3'),
                     ('적금', 400000, '#FAD02E'),
                     ('생활비', 200000, '#95A5A6'),
-                    ('구독료', 150000, '#E59866'),  # 넷플릭스, 유튜브 프리미엄 등
-                    ('회비', 50000, '#A29BFE'),    # 동호회, 학회비 등
-                    ('투자', 700000, '#6C5B7B'),  # 주식, 가상자산 등
-                    ('기타', 100000, '#B8B8B8')    # 잡다한 지출
+                    ('구독료', 150000, '#E59866'),
+                    ('회비', 50000, '#A29BFE'),
+                    ('투자', 700000, '#6C5B7B'),
+                    ('기타', 100000, '#B8B8B8')
                 ]
                 for cat in default_categories:
                     try:
                         c.execute('INSERT INTO categories (name, budget, color) VALUES (?,?,?)', cat)
                     except sqlite3.IntegrityError:
                         pass
+                conn.commit()
+            # 기본 세부 카테고리 삽입
+            c.execute('SELECT COUNT(*) FROM subcategories')
+            if c.fetchone()[0] == 0:
+                # 각 카테고리별 기본 세부 카테고리 딕셔너리
+                default_subcategories = {
+                    '주거비': ['월세', '관리비', '전기세', '수도세', '가스비'],
+                    '대출이자': ['주택담보대출', '학자금대출', '기타대출'],
+                    '통신비': ['인터넷', '휴대폰', 'TV'],
+                    '교통비': ['버스', '지하철', '택시', '주유'],
+                    '보험료': ['생명보험', '자동차보험', '건강보험', '기타보험'],
+                    '주택청약': ['청약통장'],
+                    '적금': ['은행적금', '투자적금'],
+                    '생활비': ['식비', '쇼핑', '기타'],
+                    '구독료': ['넷플릭스', '유튜브', '음악', '기타구독'],
+                    '회비': ['동호회', '학회', '기타회비'],
+                    '투자': ['주식', '가상자산', '펀드', '기타투자'],
+                    '기타': ['기타']
+                }
+                for cat_name, subcats in default_subcategories.items():
+                    # 카테고리 id 조회
+                    c.execute('SELECT id FROM categories WHERE name = ?', (cat_name,))
+                    row = c.fetchone()
+                    if row:
+                        cat_id = row[0]
+                        for sub in subcats:
+                            c.execute('INSERT INTO subcategories (category_id, name) VALUES (?, ?)', (cat_id, sub))
                 conn.commit()
         return True
     except Exception as e:
@@ -127,7 +165,18 @@ def get_categories():
         st.error(f"카테고리 불러오기 오류: {e}")
         return pd.DataFrame(columns=['id', 'name', 'budget', 'color'])
 
-# DB에서 지출 데이터를 가져오기
+# DB에서 세부 카테고리 데이터를 가져오기 (특정 카테고리)
+def get_subcategories(category_id):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            query = "SELECT * FROM subcategories WHERE category_id = ? ORDER BY name"
+            subcategories = pd.read_sql_query(query, conn, params=(category_id,))
+        return subcategories
+    except Exception as e:
+        st.error(f"세부 카테고리 불러오기 오류: {e}")
+        return pd.DataFrame(columns=['id', 'category_id', 'name'])
+
+# DB에서 지출 데이터를 가져오기 (세부 카테고리도 포함)
 def get_expenses():
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -141,9 +190,11 @@ def get_expenses():
                     e.is_fixed_expense,
                     c.name as category,
                     c.color,
-                    c.budget
+                    c.budget,
+                    s.name as subcategory
                 FROM expenses e
                 JOIN categories c ON e.category_id = c.id
+                LEFT JOIN subcategories s ON e.subcategory_id = s.id
                 ORDER BY e.date DESC
             '''
             expenses = pd.read_sql_query(query, conn)
@@ -151,18 +202,18 @@ def get_expenses():
     except Exception as e:
         st.error(f"지출 불러오기 오류: {e}")
         return pd.DataFrame(columns=['id', 'date', 'amount', 'description', 'payment_method',
-                                     'is_fixed_expense', 'category', 'color', 'budget'])
+                                     'is_fixed_expense', 'category', 'color', 'budget', 'subcategory'])
 
-# 지출 추가
-def add_expense(date, category_id, amount, description, payment_method, is_fixed):
+# 지출 추가 (세부 카테고리 포함)
+def add_expense(date, category_id, subcategory_id, amount, description, payment_method, is_fixed):
     try:
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             c.execute('''
                 INSERT INTO expenses 
-                (date, category_id, amount, description, payment_method, is_fixed_expense)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (date, category_id, amount, description, payment_method, is_fixed))
+                (date, category_id, subcategory_id, amount, description, payment_method, is_fixed_expense)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (date, category_id, subcategory_id, amount, description, payment_method, is_fixed))
             conn.commit()
         return True
     except Exception as e:
@@ -218,7 +269,7 @@ def convert_df_to_csv(df):
 # ------------------------------------------------------------------
 # 메인 함수
 def main():
-    st.title("💰 개봉 스마트 가계부")
+    st.title("💰 스마트 가계부")
 
     if not init_db():
         st.error("DB 초기화에 실패했습니다.")
@@ -234,6 +285,14 @@ def main():
                 st.error("카테고리를 불러올 수 없습니다.")
                 return
             selected_category = st.selectbox("카테고리", categories_df["name"].tolist())
+            # 세부 카테고리: 선택한 메인 카테고리의 ID를 이용하여 조회
+            category_id = int(categories_df.loc[categories_df["name"] == selected_category, "id"].iloc[0])
+            subcats_df = get_subcategories(category_id)
+            if not subcats_df.empty:
+                selected_subcategory = st.selectbox("세부 카테고리", subcats_df["name"].tolist())
+                subcategory_id = int(subcats_df.loc[subcats_df["name"] == selected_subcategory, "id"].iloc[0])
+            else:
+                subcategory_id = None
             amount_str = st.text_input("금액", value="", placeholder="숫자만 입력 (예: 50000)")
             try:
                 amount = int(amount_str.replace(",", "")) if amount_str else 0
@@ -247,9 +306,7 @@ def main():
                 if amount <= 0:
                     st.error("금액을 정확히 입력하세요.")
                 else:
-                    # 카테고리 ID를 int형으로 변환하여 전달
-                    category_id = int(categories_df.loc[categories_df["name"] == selected_category, "id"].iloc[0])
-                    if add_expense(expense_date.strftime("%Y-%m-%d"), category_id, amount, description, payment_method, is_fixed):
+                    if add_expense(expense_date.strftime("%Y-%m-%d"), category_id, subcategory_id, amount, description, payment_method, is_fixed):
                         st.success("지출이 저장되었습니다.")
         st.header("데이터 내보내기")
         expenses_df_all = get_expenses()
@@ -347,7 +404,7 @@ def main():
                 min_amount = st.number_input("최소 금액", value=0, step=10000)
             display_df = filtered_df[(filtered_df["category"].isin(selected_categories)) & (filtered_df["amount"] >= min_amount)]
             st.experimental_data_editor(
-                display_df[["id", "date", "category", "amount", "description", "payment_method"]],
+                display_df[["id", "date", "category", "subcategory", "amount", "description", "payment_method"]],
                 num_rows="dynamic",
                 use_container_width=True,
                 disabled=True
@@ -386,17 +443,16 @@ def main():
     st.subheader("지출 관리")
     st.write("전체 지출 항목과 함께, 아래 '삭제할 항목 선택' 영역에서 각 항목 옆의 체크박스를 선택한 후 삭제 버튼을 누르면 해당 항목이 삭제됩니다.")
 
-    # 먼저 전체 지출 항목을 테이블로 보여줌
+    # 전체 지출 항목 테이블 표시
     expenses_for_delete = get_expenses()
     if expenses_for_delete.empty:
         st.info("삭제할 지출 항목이 없습니다.")
     else:
         st.subheader("전체 지출 항목")
-        st.dataframe(expenses_for_delete[["id", "date", "category", "amount", "description", "payment_method"]], use_container_width=True)
+        st.dataframe(expenses_for_delete[["id", "date", "category", "subcategory", "amount", "description", "payment_method"]], use_container_width=True)
         
         with st.expander("삭제할 항목 선택"):
             st.markdown("아래에서 삭제할 항목의 체크박스를 선택하세요:")
-            # 헤더 표시
             header_cols = st.columns([0.1, 0.9])
             header_cols[0].markdown("**삭제**")
             header_cols[1].markdown("**항목 정보**")
@@ -407,7 +463,7 @@ def main():
                     if st.checkbox("", key=f"del_{row['id']}"):
                         delete_ids.append(row["id"])
                 with cols[1]:
-                    st.write(f"{row['id']} - {row['date']} / {row['category']} / {row['amount']:,}원")
+                    st.write(f"{row['id']} - {row['date']} / {row['category']} - {row['subcategory'] if row['subcategory'] else ''} / {row['amount']:,}원")
             if st.button("선택 항목 삭제"):
                 for eid in delete_ids:
                     delete_expense(eid)
