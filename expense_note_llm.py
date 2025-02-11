@@ -15,16 +15,19 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-DEBUG = True  # 디버그 메시지 출력
+DEBUG = True  # 디버그 메시지 출력 (문제 해결 후 False로 변경)
 
 DB_PATH = os.path.abspath('expenses.db')
 if DEBUG:
     st.write(f"Database path: {DB_PATH}")
 
+# ------------------------------------------------------------------
+# 데이터베이스 초기화
 def init_db():
     try:
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
+            # 카테고리 테이블 생성
             c.execute('''
                 CREATE TABLE IF NOT EXISTS categories
                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,6 +35,7 @@ def init_db():
                  budget REAL DEFAULT 0,
                  color TEXT)
             ''')
+            # 지출 테이블 생성
             c.execute('''
                 CREATE TABLE IF NOT EXISTS expenses
                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,6 +48,7 @@ def init_db():
                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                  FOREIGN KEY (category_id) REFERENCES categories (id))
             ''')
+            # 기본 카테고리 추가 여부 확인
             c.execute('SELECT COUNT(*) FROM categories')
             if c.fetchone()[0] == 0:
                 default_categories = [
@@ -67,6 +72,8 @@ def init_db():
         st.error(f'DB 초기화 오류: {e}')
         return False
 
+# ------------------------------------------------------------------
+# LLM 기반 AI 분석 함수
 def analyze_expenses_with_llm(df, period='이번 달'):
     try:
         client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -105,6 +112,8 @@ def analyze_expenses_with_llm(df, period='이번 달'):
     except Exception as e:
         return f"분석 중 오류: {e}"
 
+# ------------------------------------------------------------------
+# DB에서 카테고리 데이터를 가져오기
 def get_categories():
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -117,6 +126,7 @@ def get_categories():
         st.error(f'카테고리 불러오기 오류: {e}')
         return pd.DataFrame(columns=['id', 'name', 'budget', 'color'])
 
+# DB에서 지출 데이터를 가져오기
 def get_expenses():
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -144,6 +154,7 @@ def get_expenses():
         return pd.DataFrame(columns=['id', 'date', 'amount', 'description', 'payment_method', 
                                      'is_fixed_expense', 'category', 'color', 'budget'])
 
+# 지출 추가
 def add_expense(date, category_id, amount, description, payment_method, is_fixed):
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -159,6 +170,7 @@ def add_expense(date, category_id, amount, description, payment_method, is_fixed
         st.error(f'지출 추가 오류: {e}')
         return False
 
+# 지출 삭제 (추가 기능)
 def delete_expense(expense_id):
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -169,6 +181,8 @@ def delete_expense(expense_id):
     except Exception as e:
         st.error(f'지출 삭제 오류: {e}')
 
+# ------------------------------------------------------------------
+# 사용자 지정 기간 필터 함수
 def get_date_range(period, expenses_df):
     today = datetime.now()
     if period == '이번 달':
@@ -191,24 +205,27 @@ def get_date_range(period, expenses_df):
         start_date = st.date_input("시작 날짜", today - timedelta(days=30))
         end_date = st.date_input("종료 날짜", today)
         if start_date > end_date:
-            st.error("시작 날짜가 종료 날짜보다 늦을 수 없습니다.")
+            st.error("시작 날짜는 종료 날짜보다 이전이어야 합니다.")
             start_date, end_date = today - timedelta(days=30), today
     else:  # '전체'
         start_date = pd.to_datetime(expenses_df['date']).min() if not expenses_df.empty else today
         end_date = pd.to_datetime(expenses_df['date']).max() if not expenses_df.empty else today
     return start_date, end_date
 
+# CSV 내보내기 함수
 def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
+# ------------------------------------------------------------------
+# 메인 함수
 def main():
     st.title('💰 스마트 가계부')
-    
+
     if not init_db():
         st.error('DB 초기화 실패')
         return
 
-    # 사이드바: 지출 입력 및 CSV 내보내기
+    # ────────────── 사이드바 영역 ──────────────
     with st.sidebar:
         st.header('새로운 지출 입력')
         with st.form('expense_form'):
@@ -234,11 +251,17 @@ def main():
                     category_id = categories_df.loc[categories_df['name'] == selected_category, 'id'].iloc[0]
                     if add_expense(expense_date.strftime('%Y-%m-%d'), category_id, amount, description, payment_method, is_fixed):
                         st.session_state.success_msg = "지출이 저장되었습니다."
-                        st.experimental_rerun()
-        # 성공 메시지를 입력 폼 바로 아래에 표시
+                        # 자동 새로고침 대신 사용자가 '데이터 새로고침' 버튼을 누르도록 함
+
+        # 저장 후 성공 메시지 표시
         if 'success_msg' in st.session_state:
             st.success(st.session_state.success_msg)
-            del st.session_state.success_msg
+            # ※ 자동 새로고침(st.experimental_rerun()) 대신 아래 버튼을 사용하여 데이터 새로고침
+            if st.button("데이터 새로고침"):
+                st.experimental_rerun()
+            # 성공 메시지는 한 번만 표시
+            # (필요 시, 아래처럼 지운 후 재실행)
+            # del st.session_state.success_msg
 
         st.header("데이터 내보내기")
         expenses_df_all = get_expenses()
@@ -251,18 +274,22 @@ def main():
                 mime='text/csv'
             )
 
-    # 메인 영역: 지출 데이터 로드 및 기간 선택
-    expenses_df = get_expenses()
-    st.write("전체 지출 레코드 수:", len(expenses_df))  # 디버그용 출력
+    # ────────────── 메인 영역 ──────────────
 
-    period_option = st.selectbox('조회 기간', ['이번 달', '지난 달', '최근 3개월', '최근 6개월', '올해', '전체', '사용자 지정'])
+    # DB 전체 건수 디버깅용 출력
+    expenses_df = get_expenses()
+    st.write("전체 지출 레코드 수:", len(expenses_df))
+
+    # ※ 디버깅을 위해 기본 조회 기간을 '전체'로 설정(필요 시 다른 기간으로 변경)
+    period_option = st.selectbox('조회 기간', ['전체', '이번 달', '지난 달', '최근 3개월', '최근 6개월', '올해', '사용자 지정'])
     start_date, end_date = get_date_range(period_option, expenses_df)
     
+    # 날짜 변환 (문제가 있을 경우 오류 메시지 확인)
     expenses_df['date'] = pd.to_datetime(expenses_df['date'], errors='coerce')
     filtered_df = expenses_df[(expenses_df['date'] >= pd.to_datetime(start_date)) & 
                               (expenses_df['date'] <= pd.to_datetime(end_date))]
 
-    # 탭 구성: 대시보드, 상세 분석, AI 분석
+    # ────────────── 탭 영역 ──────────────
     tab1, tab2, tab3 = st.tabs(['📊 대시보드', '📈 상세 분석', '🤖 AI 분석'])
 
     with tab1:
@@ -375,6 +402,7 @@ def main():
                                  '예산 대비 사용률': st.column_config.NumberColumn('예산 대비 사용률', format='%.1f%%')
                              })
 
+    # ────────────── 지출 관리 영역 ──────────────
     st.markdown("---")
     st.subheader("지출 관리")
     manage_option = st.selectbox("관리 옵션 선택", ["전체 목록", "삭제할 항목 선택"])
