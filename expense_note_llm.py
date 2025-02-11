@@ -15,21 +15,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 디버그 모드 (True로 설정하면 디버그 메시지를 표시합니다)
-DEBUG = False
+DEBUG = True  # 디버그 메시지 출력
 
-# 데이터베이스 경로 설정
 DB_PATH = os.path.abspath('expenses.db')
 if DEBUG:
     st.write(f"Database path: {DB_PATH}")
 
-# ------------------------------------------------------------------
-# 데이터베이스 초기화
 def init_db():
     try:
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
-            # 카테고리 테이블 생성
             c.execute('''
                 CREATE TABLE IF NOT EXISTS categories
                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,7 +32,6 @@ def init_db():
                  budget REAL DEFAULT 0,
                  color TEXT)
             ''')
-            # 지출 테이블 생성
             c.execute('''
                 CREATE TABLE IF NOT EXISTS expenses
                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,12 +44,8 @@ def init_db():
                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                  FOREIGN KEY (category_id) REFERENCES categories (id))
             ''')
-            # 기본 카테고리 추가 여부 확인
             c.execute('SELECT COUNT(*) FROM categories')
-            categories_count = c.fetchone()[0]
-            if DEBUG:
-                st.write(f"Current categories count: {categories_count}")
-            if categories_count == 0:
+            if c.fetchone()[0] == 0:
                 default_categories = [
                     ('식비', 500000, '#FF6B6B'),
                     ('교통', 200000, '#4ECDC4'),
@@ -69,27 +59,19 @@ def init_db():
                 for cat in default_categories:
                     try:
                         c.execute('INSERT INTO categories (name, budget, color) VALUES (?,?,?)', cat)
-                        if DEBUG:
-                            st.write(f"Added category: {cat[0]}")
                     except sqlite3.IntegrityError:
-                        if DEBUG:
-                            st.write(f"Category already exists: {cat[0]}")
                         pass
                 conn.commit()
         return True
     except Exception as e:
-        st.error(f'데이터베이스 초기화 중 오류: {e}')
+        st.error(f'DB 초기화 오류: {e}')
         return False
 
-# ------------------------------------------------------------------
-# LLM 기반 AI 분석 함수
 def analyze_expenses_with_llm(df, period='이번 달'):
     try:
         client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-        # 카테고리별 지출 요약
         category_spending = df.groupby('category')['amount'].agg(['sum', 'count']).reset_index()
         category_spending['percentage'] = (category_spending['sum'] / category_spending['sum'].sum() * 100).round(2)
-        # 일별 평균 지출 패턴
         df['date'] = pd.to_datetime(df['date'])
         daily_pattern = df.groupby(df['date'].dt.day_name())['amount'].mean()
         analysis_text = f"""
@@ -121,23 +103,20 @@ def analyze_expenses_with_llm(df, period='이번 달'):
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"분석 중 오류가 발생했습니다: {e}"
+        return f"분석 중 오류: {e}"
 
-# ------------------------------------------------------------------
-# DB에서 카테고리 데이터를 가져오기
 def get_categories():
     try:
         with sqlite3.connect(DB_PATH) as conn:
             query = 'SELECT * FROM categories ORDER BY name'
             categories = pd.read_sql_query(query, conn)
         if DEBUG:
-            st.write(f"Retrieved categories: {len(categories)}")
+            st.write("카테고리 건수:", len(categories))
         return categories
     except Exception as e:
-        st.error(f'카테고리 데이터를 가져오는 중 오류: {e}')
+        st.error(f'카테고리 불러오기 오류: {e}')
         return pd.DataFrame(columns=['id', 'name', 'budget', 'color'])
 
-# DB에서 지출 데이터를 가져오기
 def get_expenses():
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -158,14 +137,13 @@ def get_expenses():
             '''
             expenses = pd.read_sql_query(query, conn)
         if DEBUG:
-            st.write(f"Retrieved expenses: {len(expenses)}")
+            st.write("전체 지출 건수:", len(expenses))
         return expenses
     except Exception as e:
-        st.error(f'지출 데이터를 가져오는 중 오류: {e}')
+        st.error(f'지출 불러오기 오류: {e}')
         return pd.DataFrame(columns=['id', 'date', 'amount', 'description', 'payment_method', 
                                      'is_fixed_expense', 'category', 'color', 'budget'])
 
-# 지출 추가
 def add_expense(date, category_id, amount, description, payment_method, is_fixed):
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -178,22 +156,19 @@ def add_expense(date, category_id, amount, description, payment_method, is_fixed
             conn.commit()
         return True
     except Exception as e:
-        st.error(f'지출 추가 중 오류: {e}')
+        st.error(f'지출 추가 오류: {e}')
         return False
 
-# 지출 삭제 (추가 기능)
 def delete_expense(expense_id):
     try:
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             c.execute('DELETE FROM expenses WHERE id = ?', (expense_id,))
             conn.commit()
-        st.success("지출 항목이 삭제되었습니다.")
+        st.success("지출 삭제 완료")
     except Exception as e:
-        st.error(f'지출 삭제 중 오류: {e}')
+        st.error(f'지출 삭제 오류: {e}')
 
-# ------------------------------------------------------------------
-# 사용자 지정 기간 필터 함수
 def get_date_range(period, expenses_df):
     today = datetime.now()
     if period == '이번 달':
@@ -216,36 +191,31 @@ def get_date_range(period, expenses_df):
         start_date = st.date_input("시작 날짜", today - timedelta(days=30))
         end_date = st.date_input("종료 날짜", today)
         if start_date > end_date:
-            st.error("시작 날짜는 종료 날짜보다 이전이어야 합니다.")
+            st.error("시작 날짜가 종료 날짜보다 늦을 수 없습니다.")
             start_date, end_date = today - timedelta(days=30), today
     else:  # '전체'
         start_date = pd.to_datetime(expenses_df['date']).min() if not expenses_df.empty else today
         end_date = pd.to_datetime(expenses_df['date']).max() if not expenses_df.empty else today
     return start_date, end_date
 
-# CSV 내보내기 함수
 def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
-# ------------------------------------------------------------------
-# 메인 함수
 def main():
     st.title('💰 스마트 가계부')
-
-    # 데이터베이스 초기화
+    
     if not init_db():
-        st.error('데이터베이스 초기화에 실패했습니다.')
+        st.error('DB 초기화 실패')
         return
 
-    # ------------------------------------------------------------------
-    # 사이드바: 지출 입력 및 CSV 내보내기 기능
+    # 사이드바: 지출 입력 및 CSV 내보내기
     with st.sidebar:
         st.header('새로운 지출 입력')
         with st.form('expense_form'):
             expense_date = st.date_input('날짜', datetime.now())
             categories_df = get_categories()
             if categories_df.empty:
-                st.error("카테고리 데이터를 불러올 수 없습니다.")
+                st.error("카테고리 불러오기 실패")
                 return
             selected_category = st.selectbox('카테고리', categories_df['name'].tolist())
             amount_str = st.text_input('금액', value='', placeholder='숫자만 입력 (예: 50000)')
@@ -259,13 +229,13 @@ def main():
             submitted = st.form_submit_button('저장')
             if submitted:
                 if amount <= 0:
-                    st.error('유효한 금액을 입력해주세요.')
+                    st.error('금액을 정확히 입력하세요.')
                 else:
                     category_id = categories_df.loc[categories_df['name'] == selected_category, 'id'].iloc[0]
                     if add_expense(expense_date.strftime('%Y-%m-%d'), category_id, amount, description, payment_method, is_fixed):
                         st.session_state.success_msg = "지출이 저장되었습니다."
                         st.experimental_rerun()
-        # 성공 메시지를 지출 입력 폼 바로 아래에 표시 (데이터 내보내기 위)
+        # 성공 메시지를 입력 폼 바로 아래에 표시
         if 'success_msg' in st.session_state:
             st.success(st.session_state.success_msg)
             del st.session_state.success_msg
@@ -281,11 +251,9 @@ def main():
                 mime='text/csv'
             )
 
-    # ------------------------------------------------------------------
-    # 메인 영역: 지출 데이터 로드 및 기간 선택 (데이터가 없어도 탭은 보입니다)
+    # 메인 영역: 지출 데이터 로드 및 기간 선택
     expenses_df = get_expenses()
-    if expenses_df.empty:
-        st.info('아직 지출 데이터가 없습니다. 사이드바에서 지출을 입력해주세요!')
+    st.write("전체 지출 레코드 수:", len(expenses_df))  # 디버그용 출력
 
     period_option = st.selectbox('조회 기간', ['이번 달', '지난 달', '최근 3개월', '최근 6개월', '올해', '전체', '사용자 지정'])
     start_date, end_date = get_date_range(period_option, expenses_df)
@@ -294,8 +262,7 @@ def main():
     filtered_df = expenses_df[(expenses_df['date'] >= pd.to_datetime(start_date)) & 
                               (expenses_df['date'] <= pd.to_datetime(end_date))]
 
-    # ------------------------------------------------------------------
-    # 탭 구성: 대시보드, 상세 분석, AI 분석 (데이터 없을 경우에도 탭은 보임)
+    # 탭 구성: 대시보드, 상세 분석, AI 분석
     tab1, tab2, tab3 = st.tabs(['📊 대시보드', '📈 상세 분석', '🤖 AI 분석'])
 
     with tab1:
@@ -317,7 +284,6 @@ def main():
             st.markdown("---")
             col_left, col_right = st.columns(2)
             with col_left:
-                # 카테고리별 지출 도넛 차트
                 cat_spending = filtered_df.groupby('category')['amount'].sum()
                 if not cat_spending.empty:
                     fig_pie = go.Figure(data=[go.Pie(
@@ -328,7 +294,6 @@ def main():
                     )])
                     fig_pie.update_layout(title='카테고리별 지출 비율')
                     st.plotly_chart(fig_pie, use_container_width=True)
-                # 예산 대비 지출 현황 차트
                 budget_vs_spending = pd.DataFrame({
                     'category': cat_spending.index,
                     'spent': cat_spending.values,
@@ -351,13 +316,11 @@ def main():
                 fig_bar.update_layout(title='카테고리별 예산 대비 지출', barmode='overlay')
                 st.plotly_chart(fig_bar, use_container_width=True)
             with col_right:
-                # 일별 지출 트렌드
                 daily_trend = filtered_df.groupby('date')['amount'].sum().reset_index()
                 if not daily_trend.empty:
                     fig_line = px.line(daily_trend, x='date', y='amount', title='일별 지출 트렌드')
                     fig_line.update_traces(line_color='#4CAF50')
                     st.plotly_chart(fig_line, use_container_width=True)
-                # 결제 수단별 지출 비율
                 payment_spending = filtered_df.groupby('payment_method')['amount'].sum()
                 fig_payment = px.pie(values=payment_spending.values, names=payment_spending.index, title='결제 수단별 지출 비율')
                 st.plotly_chart(fig_payment, use_container_width=True)
@@ -412,8 +375,6 @@ def main():
                                  '예산 대비 사용률': st.column_config.NumberColumn('예산 대비 사용률', format='%.1f%%')
                              })
 
-    # ------------------------------------------------------------------
-    # 추가: 지출 관리 (삭제 기능)
     st.markdown("---")
     st.subheader("지출 관리")
     manage_option = st.selectbox("관리 옵션 선택", ["전체 목록", "삭제할 항목 선택"])
