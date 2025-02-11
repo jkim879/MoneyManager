@@ -75,7 +75,7 @@ def init_db():
         return False
 
 # ------------------------------------------------------------------
-# LLM 기반 AI 분석 함수
+# LLM 기반 AI 분석 함수 (변경 없음)
 def analyze_expenses_with_llm(df, period='이번 달'):
     try:
         client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -156,7 +156,7 @@ def get_expenses():
         return pd.DataFrame(columns=['id', 'date', 'amount', 'description', 'payment_method', 
                                      'is_fixed_expense', 'category', 'color', 'budget'])
 
-# 지출 추가 (디버깅 메시지 추가)
+# 지출 추가 (삽입 후 바로 SELECT하여 디버그 출력)
 def add_expense(date, category_id, amount, description, payment_method, is_fixed):
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -167,9 +167,10 @@ def add_expense(date, category_id, amount, description, payment_method, is_fixed
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (date, category_id, amount, description, payment_method, is_fixed))
             conn.commit()
-            last_id = c.lastrowid
+            # 방금 삽입한 레코드 확인
+            new_record = c.execute("SELECT * FROM expenses ORDER BY id DESC LIMIT 1").fetchone()
             if DEBUG:
-                st.write(f"[DEBUG] Inserted expense with id: {last_id}")
+                st.write(f"[DEBUG] Inserted expense record: {new_record}")
         return True
     except Exception as e:
         st.error(f'[ERROR] 지출 추가 오류: {e}')
@@ -276,11 +277,9 @@ def main():
             )
 
     # ────────────── 메인 영역 ──────────────
-    # DB 전체 건수 디버깅용 출력
     expenses_df = get_expenses()
-    st.write("[DEBUG] 전체 지출 레코드 수:", len(expenses_df))
+    st.write(f"[DEBUG] 전체 지출 레코드 수: {len(expenses_df)}")
 
-    # 기본 조회 기간을 '전체'로 설정 (날짜 필터 문제 배제)
     period_option = st.selectbox('조회 기간', ['전체', '이번 달', '지난 달', '최근 3개월', '최근 6개월', '올해', '사용자 지정'])
     start_date, end_date = get_date_range(period_option, expenses_df)
     
@@ -288,7 +287,6 @@ def main():
     filtered_df = expenses_df[(expenses_df['date'] >= pd.to_datetime(start_date)) & 
                               (expenses_df['date'] <= pd.to_datetime(end_date))]
 
-    # ────────────── 탭 영역 ──────────────
     tab1, tab2, tab3 = st.tabs(['📊 대시보드', '📈 상세 분석', '🤖 AI 분석'])
 
     with tab1:
