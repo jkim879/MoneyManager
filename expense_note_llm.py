@@ -9,7 +9,7 @@ import os
 
 # 페이지 설정
 st.set_page_config(
-    page_title="스마트 가계부",
+    page_title="개봉 스마트 가계부",
     page_icon="💰",
     layout="wide",
     initial_sidebar_state="expanded"
