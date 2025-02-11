@@ -42,7 +42,7 @@ def init_db():
                     FOREIGN KEY (category_id) REFERENCES categories (id)
                 )
             ''')
-            # 지출 테이블 생성 (최초 생성 시에는 subcategory_id 컬럼 포함)
+            # 지출 테이블 생성 (세부 카테고리 컬럼 포함)
             c.execute('''
                 CREATE TABLE IF NOT EXISTS expenses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,7 +87,7 @@ def init_db():
                     except sqlite3.IntegrityError:
                         pass
                 conn.commit()
-            # 기본 세부 카테고리 삽입 (각 메인 카테고리마다 별도의 하위 항목)
+            # 기본 세부 카테고리 삽입 (각 메인 카테고리별로 서로 다른 세부 카테고리)
             c.execute('SELECT COUNT(*) FROM subcategories')
             if c.fetchone()[0] == 0:
                 default_subcategories = {
