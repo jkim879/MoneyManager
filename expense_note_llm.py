@@ -9,7 +9,7 @@ import os
 
 # 페이지 설정
 st.set_page_config(
-    page_title="개봉 스마트 가계부",
+    page_title="스마트 가계부",
     page_icon="💰",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -214,7 +214,7 @@ def convert_df_to_csv(df):
 # ------------------------------------------------------------------
 # 메인 함수
 def main():
-    st.title("💰 스마트 가계부")
+    st.title("💰 개봉 스마트 가계부")
 
     if not init_db():
         st.error("DB 초기화에 실패했습니다.")
