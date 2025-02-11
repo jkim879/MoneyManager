@@ -15,11 +15,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-DEBUG = True  # 디버그 메시지 출력 (문제 해결 후 False로 변경)
+# 디버그 모드 (문제 해결 후 False로 변경)
+DEBUG = True
 
+# 데이터베이스 경로 설정
 DB_PATH = os.path.abspath('expenses.db')
 if DEBUG:
-    st.write(f"Database path: {DB_PATH}")
+    st.write(f"[DEBUG] Database path: {DB_PATH}")
 
 # ------------------------------------------------------------------
 # 데이터베이스 초기화
@@ -69,7 +71,7 @@ def init_db():
                 conn.commit()
         return True
     except Exception as e:
-        st.error(f'DB 초기화 오류: {e}')
+        st.error(f'[ERROR] DB 초기화 오류: {e}')
         return False
 
 # ------------------------------------------------------------------
@@ -110,7 +112,7 @@ def analyze_expenses_with_llm(df, period='이번 달'):
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"분석 중 오류: {e}"
+        return f"[ERROR] 분석 중 오류: {e}"
 
 # ------------------------------------------------------------------
 # DB에서 카테고리 데이터를 가져오기
@@ -120,10 +122,10 @@ def get_categories():
             query = 'SELECT * FROM categories ORDER BY name'
             categories = pd.read_sql_query(query, conn)
         if DEBUG:
-            st.write("카테고리 건수:", len(categories))
+            st.write(f"[DEBUG] 카테고리 건수: {len(categories)}")
         return categories
     except Exception as e:
-        st.error(f'카테고리 불러오기 오류: {e}')
+        st.error(f'[ERROR] 카테고리 불러오기 오류: {e}')
         return pd.DataFrame(columns=['id', 'name', 'budget', 'color'])
 
 # DB에서 지출 데이터를 가져오기
@@ -147,14 +149,14 @@ def get_expenses():
             '''
             expenses = pd.read_sql_query(query, conn)
         if DEBUG:
-            st.write("전체 지출 건수:", len(expenses))
+            st.write(f"[DEBUG] 전체 지출 건수: {len(expenses)}")
         return expenses
     except Exception as e:
-        st.error(f'지출 불러오기 오류: {e}')
+        st.error(f'[ERROR] 지출 불러오기 오류: {e}')
         return pd.DataFrame(columns=['id', 'date', 'amount', 'description', 'payment_method', 
                                      'is_fixed_expense', 'category', 'color', 'budget'])
 
-# 지출 추가
+# 지출 추가 (디버깅 메시지 추가)
 def add_expense(date, category_id, amount, description, payment_method, is_fixed):
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -165,12 +167,15 @@ def add_expense(date, category_id, amount, description, payment_method, is_fixed
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (date, category_id, amount, description, payment_method, is_fixed))
             conn.commit()
+            last_id = c.lastrowid
+            if DEBUG:
+                st.write(f"[DEBUG] Inserted expense with id: {last_id}")
         return True
     except Exception as e:
-        st.error(f'지출 추가 오류: {e}')
+        st.error(f'[ERROR] 지출 추가 오류: {e}')
         return False
 
-# 지출 삭제 (추가 기능)
+# 지출 삭제
 def delete_expense(expense_id):
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -179,7 +184,7 @@ def delete_expense(expense_id):
             conn.commit()
         st.success("지출 삭제 완료")
     except Exception as e:
-        st.error(f'지출 삭제 오류: {e}')
+        st.error(f'[ERROR] 지출 삭제 오류: {e}')
 
 # ------------------------------------------------------------------
 # 사용자 지정 기간 필터 함수
@@ -256,12 +261,8 @@ def main():
         # 저장 후 성공 메시지 표시
         if 'success_msg' in st.session_state:
             st.success(st.session_state.success_msg)
-            # ※ 자동 새로고침(st.experimental_rerun()) 대신 아래 버튼을 사용하여 데이터 새로고침
             if st.button("데이터 새로고침"):
                 st.experimental_rerun()
-            # 성공 메시지는 한 번만 표시
-            # (필요 시, 아래처럼 지운 후 재실행)
-            # del st.session_state.success_msg
 
         st.header("데이터 내보내기")
         expenses_df_all = get_expenses()
@@ -275,16 +276,14 @@ def main():
             )
 
     # ────────────── 메인 영역 ──────────────
-
     # DB 전체 건수 디버깅용 출력
     expenses_df = get_expenses()
-    st.write("전체 지출 레코드 수:", len(expenses_df))
+    st.write("[DEBUG] 전체 지출 레코드 수:", len(expenses_df))
 
-    # ※ 디버깅을 위해 기본 조회 기간을 '전체'로 설정(필요 시 다른 기간으로 변경)
+    # 기본 조회 기간을 '전체'로 설정 (날짜 필터 문제 배제)
     period_option = st.selectbox('조회 기간', ['전체', '이번 달', '지난 달', '최근 3개월', '최근 6개월', '올해', '사용자 지정'])
     start_date, end_date = get_date_range(period_option, expenses_df)
     
-    # 날짜 변환 (문제가 있을 경우 오류 메시지 확인)
     expenses_df['date'] = pd.to_datetime(expenses_df['date'], errors='coerce')
     filtered_df = expenses_df[(expenses_df['date'] >= pd.to_datetime(start_date)) & 
                               (expenses_df['date'] <= pd.to_datetime(end_date))]
@@ -402,7 +401,6 @@ def main():
                                  '예산 대비 사용률': st.column_config.NumberColumn('예산 대비 사용률', format='%.1f%%')
                              })
 
-    # ────────────── 지출 관리 영역 ──────────────
     st.markdown("---")
     st.subheader("지출 관리")
     manage_option = st.selectbox("관리 옵션 선택", ["전체 목록", "삭제할 항목 선택"])
