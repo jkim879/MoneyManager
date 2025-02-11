@@ -19,12 +19,12 @@ st.set_page_config(
 DB_PATH = os.path.abspath('expenses.db')
 
 # ------------------------------------------------------------------
-# 데이터베이스 초기화
+# 데이터베이스 초기화 (메인 카테고리, 세부 카테고리, 지출 테이블 생성 및 기본 데이터 삽입)
 def init_db():
     try:
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
-            # 카테고리 테이블 생성
+            # 메인 카테고리 테이블 생성
             c.execute('''
                 CREATE TABLE IF NOT EXISTS categories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,7 +42,7 @@ def init_db():
                     FOREIGN KEY (category_id) REFERENCES categories (id)
                 )
             ''')
-            # 지출 테이블 생성 (subcategory_id 컬럼 추가)
+            # 지출 테이블 생성 (세부 카테고리 컬럼 추가)
             c.execute('''
                 CREATE TABLE IF NOT EXISTS expenses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,7 +58,7 @@ def init_db():
                     FOREIGN KEY (subcategory_id) REFERENCES subcategories (id)
                 )
             ''')
-            # 기본 카테고리 삽입
+            # 메인 카테고리 기본 데이터 삽입
             c.execute('SELECT COUNT(*) FROM categories')
             if c.fetchone()[0] == 0:
                 default_categories = [
@@ -81,26 +81,24 @@ def init_db():
                     except sqlite3.IntegrityError:
                         pass
                 conn.commit()
-            # 기본 세부 카테고리 삽입
+            # 기본 세부 카테고리 삽입 (각 메인 카테고리마다 별도의 하위 항목)
             c.execute('SELECT COUNT(*) FROM subcategories')
             if c.fetchone()[0] == 0:
-                # 각 카테고리별 기본 세부 카테고리 딕셔너리
                 default_subcategories = {
-                    '주거비': ['월세', '관리비', '전기세', '수도세', '가스비'],
-                    '대출이자': ['주택담보대출', '학자금대출', '기타대출'],
-                    '통신비': ['인터넷', '휴대폰', 'TV'],
-                    '교통비': ['버스', '지하철', '택시', '주유'],
-                    '보험료': ['생명보험', '자동차보험', '건강보험', '기타보험'],
+                    '주거비': ['관리비', '전기세', '수도세', '난방비'],
+                    '대출이자': ['전세대출', '기타대출'],
+                    '통신비': ['인터넷', '핸드폰', 'TV'],
+                    '교통비': ['지하철', '버스', '렌트카', '택시', '주유'],
+                    '보험료': ['지성 보험료', '승미 보험료'],
                     '주택청약': ['청약통장'],
-                    '적금': ['은행적금', '투자적금'],
-                    '생활비': ['식비', '쇼핑', '기타'],
-                    '구독료': ['넷플릭스', '유튜브', '음악', '기타구독'],
-                    '회비': ['동호회', '학회', '기타회비'],
-                    '투자': ['주식', '가상자산', '펀드', '기타투자'],
+                    '적금': ['은행적금', '개인연금'],
+                    '생활비': ['식비', '식료품 구매', '외식', '기타 생활비'],
+                    '구독료': ['넷플릭스', '유튜브 프리미엄', '음악 서비스', '기타 구독료'],
+                    '회비': ['동호회 회비', '가족 회비', '기타 회비'],
+                    '투자': ['주식', '가상자산', '펀드', '기타 투자'],
                     '기타': ['기타']
                 }
                 for cat_name, subcats in default_subcategories.items():
-                    # 카테고리 id 조회
                     c.execute('SELECT id FROM categories WHERE name = ?', (cat_name,))
                     row = c.fetchone()
                     if row:
@@ -154,7 +152,7 @@ def analyze_expenses_with_llm(df, period='이번 달'):
         return f"분석 중 오류: {e}"
 
 # ------------------------------------------------------------------
-# DB에서 카테고리 데이터를 가져오기
+# DB에서 메인 카테고리 데이터를 가져오기
 def get_categories():
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -165,7 +163,7 @@ def get_categories():
         st.error(f"카테고리 불러오기 오류: {e}")
         return pd.DataFrame(columns=['id', 'name', 'budget', 'color'])
 
-# DB에서 세부 카테고리 데이터를 가져오기 (특정 카테고리)
+# DB에서 세부 카테고리 데이터를 가져오기 (특정 메인 카테고리)
 def get_subcategories(category_id):
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -176,7 +174,7 @@ def get_subcategories(category_id):
         st.error(f"세부 카테고리 불러오기 오류: {e}")
         return pd.DataFrame(columns=['id', 'category_id', 'name'])
 
-# DB에서 지출 데이터를 가져오기 (세부 카테고리도 포함)
+# DB에서 지출 데이터를 가져오기 (세부 카테고리 포함)
 def get_expenses():
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -285,7 +283,7 @@ def main():
                 st.error("카테고리를 불러올 수 없습니다.")
                 return
             selected_category = st.selectbox("카테고리", categories_df["name"].tolist())
-            # 세부 카테고리: 선택한 메인 카테고리의 ID를 이용하여 조회
+            # 메인 카테고리 선택 후, 해당 카테고리의 세부 카테고리 조회
             category_id = int(categories_df.loc[categories_df["name"] == selected_category, "id"].iloc[0])
             subcats_df = get_subcategories(category_id)
             if not subcats_df.empty:
