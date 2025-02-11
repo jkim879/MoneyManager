@@ -215,6 +215,7 @@ def convert_df_to_csv(df):
 # 메인 함수
 def main():
     st.title("💰 스마트 가계부")
+
     if not init_db():
         st.error("DB 초기화에 실패했습니다.")
         return
@@ -242,6 +243,7 @@ def main():
                 if amount <= 0:
                     st.error("금액을 정확히 입력하세요.")
                 else:
+                    # 카테고리 ID를 int형으로 변환하여 전달
                     category_id = int(categories_df.loc[categories_df["name"] == selected_category, "id"].iloc[0])
                     if add_expense(expense_date.strftime("%Y-%m-%d"), category_id, amount, description, payment_method, is_fixed):
                         st.success("지출이 저장되었습니다.")
@@ -260,10 +262,12 @@ def main():
     expenses_df = get_expenses()
     period_option = st.selectbox("조회 기간", ["전체", "이번 달", "지난 달", "최근 3개월", "최근 6개월", "올해", "사용자 지정"])
     start_date, end_date = get_date_range(period_option, expenses_df)
+    
     expenses_df["date"] = pd.to_datetime(expenses_df["date"], errors="coerce")
     filtered_df = expenses_df[(expenses_df["date"] >= pd.to_datetime(start_date)) & (expenses_df["date"] <= pd.to_datetime(end_date))]
 
     tab1, tab2, tab3 = st.tabs(["📊 대시보드", "📈 상세 분석", "🤖 AI 분석"])
+
     with tab1:
         st.subheader("주요 지표")
         if filtered_df.empty:
@@ -376,25 +380,35 @@ def main():
     # ────────────── 지출 관리 영역 (전체 항목 표시 및 체크박스로 삭제) ──────────────
     st.markdown("---")
     st.subheader("지출 관리")
-    st.write("아래 전체 지출 항목이 표시됩니다. 각 항목 옆의 체크박스를 선택한 후 '삭제' 버튼을 누르면 해당 항목이 삭제됩니다.")
+    st.write("전체 지출 항목과 함께, 아래 '삭제할 항목 선택' 영역에서 각 항목 옆의 체크박스를 선택한 후 삭제 버튼을 누르면 해당 항목이 삭제됩니다.")
+
+    # 먼저 전체 지출 항목을 테이블로 보여줌
     expenses_for_delete = get_expenses()
     if expenses_for_delete.empty:
         st.info("삭제할 지출 항목이 없습니다.")
     else:
-        delete_ids = []
-        # 각 행을 한 줄씩 표시하며 체크박스 추가
-        for _, row in expenses_for_delete.iterrows():
-            cols = st.columns([0.1, 0.9])
-            with cols[0]:
-                if st.checkbox("", key=f"del_{row['id']}"):
-                    delete_ids.append(row["id"])
-            with cols[1]:
-                st.write(f"{row['id']} - {row['date']} / {row['category']} / {row['amount']:,}원")
-        if st.button("선택 항목 삭제"):
-            for eid in delete_ids:
-                delete_expense(eid)
-            st.success("선택한 항목이 삭제되었습니다.")
-            st.experimental_rerun()
+        st.subheader("전체 지출 항목")
+        st.dataframe(expenses_for_delete[["id", "date", "category", "amount", "description", "payment_method"]], use_container_width=True)
+        
+        with st.expander("삭제할 항목 선택"):
+            st.markdown("아래에서 삭제할 항목의 체크박스를 선택하세요:")
+            # 헤더 표시
+            header_cols = st.columns([0.1, 0.9])
+            header_cols[0].markdown("**삭제**")
+            header_cols[1].markdown("**항목 정보**")
+            delete_ids = []
+            for _, row in expenses_for_delete.iterrows():
+                cols = st.columns([0.1, 0.9])
+                with cols[0]:
+                    if st.checkbox("", key=f"del_{row['id']}"):
+                        delete_ids.append(row["id"])
+                with cols[1]:
+                    st.write(f"{row['id']} - {row['date']} / {row['category']} / {row['amount']:,}원")
+            if st.button("선택 항목 삭제"):
+                for eid in delete_ids:
+                    delete_expense(eid)
+                st.success("선택한 항목이 삭제되었습니다.")
+                st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
