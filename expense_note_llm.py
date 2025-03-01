@@ -278,6 +278,13 @@ def main():
 
     # ────────────── 사이드바 영역 ──────────────
     with st.sidebar:
+        # 자산 정보 영역: 사용자가 현재 보유한 금액 입력 (예: 1,000,000원)
+        st.header("자산 정보")
+        if "current_balance" not in st.session_state:
+            st.session_state["current_balance"] = 1000000
+        current_balance = st.number_input("현재 보유 금액", value=st.session_state["current_balance"], step=10000, format="%d")
+        st.session_state["current_balance"] = current_balance
+
         st.header("새로운 지출 입력")
         # 메인 카테고리 및 세부 카테고리 선택 (폼 외부에서 동적 반영)
         categories_df = get_categories()
@@ -335,10 +342,17 @@ def main():
 
     with tab1:
         st.subheader("주요 지표")
+        # 전체 지출(모든 기록)을 기준으로 현재 잔액 계산
+        expenses_all = get_expenses()
+        overall_expense = expenses_all["amount"].sum() if not expenses_all.empty else 0
+        current_balance = st.session_state.get("current_balance", 0)
+        current_money = current_balance - overall_expense
+        st.metric("현재 잔액", f"{current_money:,.0f}원")
+
         if filtered_df.empty:
             st.info("선택된 기간에 해당하는 지출 데이터가 없습니다.")
         else:
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, _ = st.columns(4)
             total_expense = filtered_df["amount"].sum()
             days_count = (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1
             avg_daily = total_expense / days_count if days_count > 0 else 0
@@ -348,6 +362,8 @@ def main():
                 st.metric("일평균 지출", f"{avg_daily:,.0f}원")
             with col3:
                 st.metric("거래 건수", f"{len(filtered_df):,}건")
+            # 네 번째 칼럼은 현재 잔액이 이미 상단에 표시됨
+
             st.markdown("---")
             col_left, col_right = st.columns(2)
             with col_left:
